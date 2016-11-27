@@ -50,6 +50,7 @@
 #include <VL53L0X\VL53L0X.h>
 //#include "stringlib.h"
 
+#include <HMC5883L\HMC5883L.h>	//compass
 
 
 #pragma endregion
@@ -58,71 +59,72 @@
 //  CREAZIONE OGGETTI GLOBALI
 // ////////////////////////////////////////////////////////////////////////////////////////////
 #pragma region CREAZIONE OGGETTI GLOBALI
+	HMC5883L compass;
+#define COMPASS HMC5883L
+	#if OPT_SERVOSONAR
+	// va messo prima dell'istanza del robot
+	Servo servoSonar;
+	NewPing Sonar(Pin_SonarTrig, Pin_SonarEcho);
+	#endif
 
-#if OPT_SERVOSONAR
-// va messo prima dell'istanza del robot
-Servo servoSonar;
-NewPing Sonar(Pin_SonarTrig, Pin_SonarEcho);
-#endif
+	struct robot_c robot;	//was  struct robot_c robot;
 
-struct robot_c robot;	//was  struct robot_c robot;
+	#pragma region VL53L0X distanceSensor
+		VL53L0X distanceSensor;
+		// Uncomment this line to use long range mode. This
+		// increases the sensitivity of the distanceSensor and extends its
+		// potential range, but increases the likelihood of getting
+		// an inaccurate reading because of reflections from objects
+		// other than the intended target. It works best in dark
+		// conditions.
+		#define LONG_RANGE
+		// Uncomment ONE of these two lines to get
+		// - higher speed at the cost of lower accuracy OR
+		// - higher accuracy at the cost of lower speed
 
-#pragma region VL53L0X distanceSensor
-VL53L0X distanceSensor;
-// Uncomment this line to use long range mode. This
-// increases the sensitivity of the distanceSensor and extends its
-// potential range, but increases the likelihood of getting
-// an inaccurate reading because of reflections from objects
-// other than the intended target. It works best in dark
-// conditions.
-#define LONG_RANGE
-// Uncomment ONE of these two lines to get
-// - higher speed at the cost of lower accuracy OR
-// - higher accuracy at the cost of lower speed
+		//#define HIGH_SPEED
+		#define HIGH_ACCURACY
 
-//#define HIGH_SPEED
-#define HIGH_ACCURACY
-
-#pragma endregion
-
-
-// ////////////////////////////////////////////////////////////////////////////////////////////
+	#pragma endregion
 
 
-// ////////////////////////////////////////////////////////////////////////////////////////////
-//  CmdMessenger object to the default Serial port
-// ////////////////////////////////////////////////////////////////////////////////////////////
-#include <CmdMessenger2/CmdMessenger2.h>
-static CmdMessenger2 cmdMMI = CmdMessenger2(SERIAL_MMI);
-static CmdMessenger2 cmdPC = CmdMessenger2(SERIAL_MSG);
-#include <MyRobotLibs\RobotInterfaceCommands2.h>
+	// ////////////////////////////////////////////////////////////////////////////////////////////
 
-//------------------------------------------------------------------------------
-#pragma region DEFINIZIONE MAILBOX VOICE
-// mailbox size and memory pool object count
-const size_t MB_COUNT = 6;
 
-// type for a memory pool object
-struct PoolObject_t {
-	char* name;
-	char str[100];
-	int size;
-};
-// array of memory pool objects
-PoolObject_t PoolObject[MB_COUNT];
+	// ////////////////////////////////////////////////////////////////////////////////////////////
+	//  CmdMessenger object to the default Serial port
+	// ////////////////////////////////////////////////////////////////////////////////////////////
+	#include <CmdMessenger2/CmdMessenger2.h>
+	static CmdMessenger2 cmdMMI = CmdMessenger2(SERIAL_MMI);
+	static CmdMessenger2 cmdPC = CmdMessenger2(SERIAL_MSG);
+	#include <MyRobotLibs\RobotInterfaceCommands2.h>
 
-// memory pool structure
-MEMORYPOOL_DECL(memPool, MB_COUNT, 0);
+	//------------------------------------------------------------------------------
+	#pragma region DEFINIZIONE MAILBOX VOICE
+		// mailbox size and memory pool object count
+		const size_t MB_COUNT = 6;
 
-// slots for mailbox messages
-msg_t letter[MB_COUNT];
+		// type for a memory pool object
+		struct PoolObject_t {
+			char* name;
+			char str[100];
+			int size;
+		};
+		// array of memory pool objects
+		PoolObject_t PoolObject[MB_COUNT];
 
-// mailbox structure
-MAILBOX_DECL(mailVoice, &letter, MB_COUNT);
+		// memory pool structure
+		MEMORYPOOL_DECL(memPool, MB_COUNT, 0);
 
-#pragma endregion
+		// slots for mailbox messages
+		msg_t letter[MB_COUNT];
 
-// ////////////////////////////////////////////////////////////////////////////////////////////
+		// mailbox structure
+		MAILBOX_DECL(mailVoice, &letter, MB_COUNT);
+
+	#pragma endregion
+
+	// ////////////////////////////////////////////////////////////////////////////////////////////
 
 #pragma endregion
 
@@ -342,10 +344,11 @@ static THD_FUNCTION(thdScan, arg) {
 	while (!robot.status.operatingMode == AUTONOMOUS)
 	{
  
-		OnCmdSonarScan(&cmdMMI);
- 
+		LEDTOP_G_ON
+		OnCmdSonarScanDefault(&cmdMMI);
+		LEDTOP_G_OFF
 
-		chThdSleepMilliseconds(5000);
+		chThdYield(); //		chThdSleepMilliseconds(5000);
 
 	}
 }
@@ -473,10 +476,10 @@ void chSetup() {
 		chPoolFree(&memPool, &PoolObject[i]);
 	}
 
+	chThdCreateStatic(waScan, sizeof(waScan), NORMALPRIO + 4, thdScan, NULL);
 	chThdCreateStatic(waPCcommands, sizeof(waPCcommands), NORMALPRIO + 4, thdPCcommands, NULL);
 	chThdCreateStatic(waMMIcommands, sizeof(waMMIcommands), NORMALPRIO + 2, thdMMIcommands, NULL);
 	chThdCreateStatic(waReadSensors, sizeof(waReadSensors), NORMALPRIO + 2, thdReadSensors, NULL);
-	chThdCreateStatic(waScan, sizeof(waScan), NORMALPRIO + 2, thdScan, NULL);
 	chThdCreateStatic(waSendStatus, sizeof(waSendStatus), NORMALPRIO , thdSendStatus, NULL);
 	//chThdCreateStatic(waFlashLed, sizeof(waFlashLed), NORMALPRIO + 2, FlashLed, NULL);
 //	chThdCreateStatic(waThreadMonitor, sizeof(waThreadMonitor), NORMALPRIO + 1, ThreadMonitor, NULL);
@@ -536,13 +539,40 @@ void setup()
 		#endif
 	#pragma endregion
 
+	#pragma region Initialize compass HMC5883L
+		// Initialize Initialize HMC5883L
+		SERIAL_MSG.println("Initialize HMC5883L");
+		while (!compass.begin())
+		{
+			Serial.println("Could not find a valid HMC5883L sensor, check wiring!");
+			delay(500);
+		}
+
+		// Set measurement range
+		compass.setRange(HMC5883L_RANGE_1_3GA);
+
+		// Set measurement mode
+		compass.setMeasurementMode(HMC5883L_CONTINOUS);
+
+		// Set data rate
+		compass.setDataRate(HMC5883L_DATARATE_30HZ);
+
+		// Set number of samples averaged
+		compass.setSamples(HMC5883L_SAMPLES_8);
+
+		// Set calibration offset. See HMC5883L_calibration.ino
+		compass.setOffset(0, 0);
+
+
+	#pragma endregion
+
 
 	// MOTOR ENCODER
 	//attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_A), loadEncoderPositionOnChange, CHANGE);
 	//attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_B), loadEncoderPositionOnChange, CHANGE);
 
 	// inizializzazione ROBOT ---------------------
-	robot.initServoAndSonar(&servoSonar, &Sonar, &distanceSensor);
+	robot.initServoAndSonar(&servoSonar, &Sonar, &distanceSensor, &compass);
 
 	#if 0//test ixproxy
 	SERIAL_MSG.print("testing ixproxy...");
@@ -603,6 +633,18 @@ void setup()
 			}
 		}
 	#endif // 1
+
+		while (true)
+	{
+
+		SERIAL_MSG.println("testing OnCmdSonarScanDefault...");
+		OnCmdSonarScanDefault(&cmdPC);
+		//robot.LaserScanBatch();
+	}
+	
+	SERIAL_MSG.print("COMPASS Degress = ");
+	SERIAL_MSG.println(robot.getCompassDeg());
+
 
 	SERIAL_MSG.print("running IBIT...");
 	robot.runIBIT(300, &servoSonar, &Sonar);
