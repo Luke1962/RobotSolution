@@ -23,10 +23,11 @@
 	//#define T 1000
 
 	//////////////////////////////////////////////////////////////////////////
-	// D E B U G															//
+	// OPZIONI DI D E B U G													//
 	//////////////////////////////////////////////////////////////////////////
 	#define DEBUG_ON
 	#include <dbg.h>
+
 	//////////////////////////////////////////////////////////////////////////
 	//																		//
 	//						 O P Z I O N I   R O B O T						//
@@ -36,13 +37,15 @@
 	#define OPT_SERVOSONAR 1	//INCLUDI FUNZIONALITA' SERVO-SONAR
 	#define OPT_ENCODERS  0	//INCLUDI ENCODERS
 
+	#define INPUTCHARARRAYSIZE 50 //dimensione buffer seriale
+
 
 	//////////////////////////////////////////////////////////////////////////////////
 	// LIBRERIE                                    ///////////////////////////////////
 	//////////////////////////////////////////////////////////////////////////////////
 	#pragma region Librerie
 		#include <ChibiOS_AVR/ChibiOS_AVR.h>
-	#include <SoftwareSerial.h>		//C:\Program Files %28x86%29\Arduino\hardware\arduino\avr\libraries\SoftwareSerial
+		#include <SoftwareSerial.h>		//C:\Program Files %28x86%29\Arduino\hardware\arduino\avr\libraries\SoftwareSerial
 		#include <TinyGPSplus\TinyGPS++.h>	//se manca non compila a causa del robotModel.cpp nella stessa cartella di robot\Commands_Enum.h
 
 		#include <string.h> 
@@ -53,25 +56,21 @@
 		//#include <robot\Commands_Enum.h>
 		#include <MyRobotLibs\robotModel.h>
 		#include <MyRobotLibs\SpeakSerialInterface.h>
-
+		#include <MyRobotLibs\CircularBuffer.h>
 	#pragma endregion
 #pragma endregion
 
-// ////////////////////////////////////////////////////////////////////////////////////////////
-//  P A R A M E T R I  E  V A R I A B I L I  G L O B A L I
-// ////////////////////////////////////////////////////////////////////////////////////////////
-	#define INPUTCHARARRAYSIZE 50 //dimensione buffer seriale
-	struct robotModel_c robotModel;
 
 // ////////////////////////////////////////////////////////////////////////////////////////////
 //  CREAZIONE OGGETTI GLOBALI
 // ////////////////////////////////////////////////////////////////////////////////////////////
 #pragma region CREAZIONE OGGETTI GLOBALI
 	//#include <servo/src/Servo.h> //deve restare qui altrimenti il linker s'incazza (??)
-
-
 	// ////////////////////////////////////////////////////////////////////////////////////////////
-	// SETUP E FUNZIONI PER ROTARY ENCODER
+	// MODELLO ROBOT
+	struct robotModel_c robotModel;
+
+
 	#pragma region ROTARY ENCODER
 		#include <Rotary/Rotary.h>	//https://github.com/brianlow/Rotary
 
@@ -81,7 +80,7 @@
 		int current_encoder_position = 0;
 		int current_encoder_delta = 0;
 
-		Rotary encoder = Rotary(ROT_ENCODER_PIN_A, ROT_ENCODER_PIN_B);
+		Rotary encoder = Rotary(Pin_ROT_ENCODER_A, Pin_ROT_ENCODER_B);
 
 
 		void printEncoderInfo() {
@@ -128,7 +127,8 @@
 				encoder_position--;
 			}
 		}
-
+		// buffer circolare dei messaggi ricevuti
+		CircularBuffer<String,5> rxBuf;
 	#pragma endregion
 	// ////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -323,6 +323,9 @@
 
 
 
+// ////////////////////////////////////////////////////////////////////////////////////////////
+//  P A R A M E T R I  E  V A R I A B I L I  G L O B A L I
+// ////////////////////////////////////////////////////////////////////////////////////////////
 
 #pragma region Variabili globali
 
@@ -783,9 +786,6 @@
 
 
 	#pragma endregion
-
-
-
 //------------------------------------------------------------------------------
 
 
@@ -803,7 +803,8 @@
 // thread 1		- Esplora
 //////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////
-/*
+#pragma region ESPLORA
+				/*
 	static THD_WORKING_AREA(waThreadEsplora, 400);
 	static THD_FUNCTION(ThreadEsplora, arg) {
 		const int FWDIST = 10;
@@ -834,7 +835,7 @@
 
 
 			robotModel.rotateDeg(alfa);
-			cmDone = robotModel.moveCm(robotModel.status.parameters.sonarMaxDistance);	// avanti 
+			cmDone = robotModel.moveCm(robotModel.status.parameters.sonarMaxDistance);	// avanti
 			if (cmDone < (robotModel.status.parameters.sonarMaxDistance - 1))	//ostacolo ?
 			{
 				SERIAL_MSG.println("1,Obst!;");
@@ -861,14 +862,16 @@
 		//  return 0;
 	}
 	*/
-//////////////////////////////////////////////////////////////////////////////////
+
+#pragma endregion
+	//////////////////////////////////////////////////////////////////////////////////
 // COMMAND MANAGER ( COMANDI DA SERIALE O BLUETOOTH INTERFACE  )    ////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////
 
 /*
-formato comandi vocali: *comando#
+formato comandi vocali: *comando#  Es.  *ROBOT AVANTI 20#
 formato comdMessenger:  [cmdId],[parametri];  o [cmd];
-kbGetSensorsHRate
+
 
 */ 
 #pragma region Processo: comandi
@@ -917,45 +920,7 @@ static THD_FUNCTION(thdComandiBT, arg) {
 
 		chThdSleepMilliseconds(1000);//	chThdYield();
 
-#pragma region cmdWiFi
-						/*
-		// da tenere allineata con robot.cs >  OnkbGetSensorsHighRate(ReceivedCommand arguments)
-		cmdWiFi.sendCmdStart(kbGetSensorsHRate);
 
-		cmdWiFi.sendCmdArg(robot.posCurrent.x);	//robot position X
-		cmdWiFi.sendCmdArg(robot.posCurrent.y);	//robot position y
-		cmdWiFi.sendCmdArg(robot.posCurrent.r);	//robot position alfa gradi
-
-		cmdWiFi.sendCmdArg(robot.status.irproxy.fw);	// IR proxy
-		cmdWiFi.sendCmdArg(robot.status.irproxy.fwHL);	// IR proxy
-		cmdWiFi.sendCmdArg(robot.status.irproxy.bk);	// IR proxy
-		cmdWiFi.sendCmdArg(robot.status.pirDome);		// movimento
-
-		cmdWiFi.sendCmdArg(robot.status.analog[0]);	//pot
-		cmdWiFi.sendCmdArg(robot.status.analog[1]);	//batteria
-		cmdWiFi.sendCmdArg(robot.status.analog[2]);	//light
-
-		cmdWiFi.sendCmdArg(robot.getReleStatus(0));		//rele 1
-		cmdWiFi.sendCmdArg(robot.getReleStatus(1));		//rel2
-
-		cmdWiFi.sendCmdArg(digitalReadFast(Pin_MotENR));	//status motori
-		cmdWiFi.sendCmdArg(digitalReadFast(Pin_MotENL));
-
-		cmdWiFi.sendCmdArg(robot.status.switchTop); // status switch modo Autonomo/slave
-		cmdWiFi.sendCmdArg(robot.status.laserOn); // laser
-		cmdWiFi.sendCmdArg(robot.readBattChargeLevel());
-
-
-		cmdWiFi.sendCmdArg(robot.status.gps.sats);		//gps
-		cmdWiFi.sendCmdArg(robot.status.gps.lat);
-		cmdWiFi.sendCmdArg(robot.status.gps.lng);
-
-
-
-		cmdWiFi.sendCmdEnd();
-		*/
-
-#pragma endregion
 
 /*
 
@@ -1350,6 +1315,12 @@ static THD_FUNCTION(thdRobotCoreInterface, arg) {
 				//printEncoderInfo();
 				robotModel.status.sensors.analog[Pin_AnaPot1 - Pin_AnaBase]= current_encoder_position;
 			}
+			if (!digitalRead(Pin_ROT_ENCODER_SWITCH))//è a logica negata!
+			{
+				playSingleNote(100, 40);
+				current_encoder_position = 0;
+				robotModel.status.sensors.analog[Pin_AnaPot1 - Pin_AnaBase] = current_encoder_position;
+			}
 			//digitalWrite(PIN_LED, 1);
 			//chThdSleepMilliseconds(200 + current_encoder_position);
 			//digitalWrite(PIN_LED, 0);// Turn LED on.
@@ -1527,6 +1498,9 @@ static THD_FUNCTION(thdRobotCoreInterface, arg) {
 			TFTprintAtStr(TFTDATACOL, TFTROW(r++), "AUTONOMOUS");
 
 		}
+
+
+
 		//tftMsg =robotModel.getOperatingModeChar();
 		//TFTprintAtStr( TFTDATACOL, TFTROW(r++), tftMsg);
 		//TFTprintAtStr( TFTDATACOL, TFTROW(r++), tftMsg);
@@ -1534,8 +1508,13 @@ static THD_FUNCTION(thdRobotCoreInterface, arg) {
 		// Visualizza l'ultimo comando via seriale ---------------------------------------------------
 		tft.setColor(VGA_WHITE);
 
-		TFTprintAtStr(TFTDATACOL, TFTROW(r++), *serialRxBuffer);
-
+		
+		//TFTprintAtStr(TFTDATACOL, TFTROW(r++), *serialRxBuffer);
+		while ((rxBuf.remain()>0 ) && (TFTROW(r)< (TFT_Y_HEIGHT -TFT_ROWSPACING)))
+		{
+			sTFT = rxBuf.pop();
+			TFTprintAtStr(TFTDATACOL, TFTROW(r++), sTFT);
+		}
 
 #if 0
 		// Visualizza la mappa radar ------------------
@@ -2167,7 +2146,7 @@ void chSetup() {
 	thdRobotCoreInterface:  + 1			>> no +2 OK
 	thdCommands:0  
 	*/
-	chThdCreateStatic(waRobotCoreInterface, sizeof(waRobotCoreInterface), NORMALPRIO + 3, thdRobotCoreInterface, NULL);
+	chThdCreateStatic(waRobotCoreInterface, sizeof(waRobotCoreInterface), NORMALPRIO + 2, thdRobotCoreInterface, NULL);
 	chThdCreateStatic(waComandiBT, sizeof(waComandiBT), NORMALPRIO + 2, thdComandiBT, NULL);
 	chThdCreateStatic(waThreadTFT, sizeof(waThreadTFT), NORMALPRIO + 2, thdTFT, NULL);
 //	chThdCreateStatic(waBtCommands, sizeof(waBtCommands), NORMALPRIO+2, thdCommands, NULL);
@@ -2253,8 +2232,8 @@ void setup()
 
 			
 	#pragma region Setup Interrupts for Rotary Encoders
-		attachInterrupt(digitalPinToInterrupt(ROT_ENCODER_PIN_A), loadEncoderPositionOnChange, CHANGE);
-		attachInterrupt(digitalPinToInterrupt(ROT_ENCODER_PIN_B), loadEncoderPositionOnChange, CHANGE);
+		attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_A), loadEncoderPositionOnChange, CHANGE);
+		attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_B), loadEncoderPositionOnChange, CHANGE);
 
 	#pragma endregion
 
