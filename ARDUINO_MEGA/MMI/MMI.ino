@@ -11,6 +11,16 @@
 	//////////////////////////////////////////////////////////////////////////
 	// C O N F I G U R A Z I O N E  H A R D W A R E							//
 	//////////////////////////////////////////////////////////////////////////
+	#include <quadEncoder.h>
+	#include <menuUTouch.h>
+	//#include <menuU8G.h>
+	//#include <menuPrint.h>
+	//#include <menuLCDs.h>
+	//#include <menuLCD.h>
+	//#include <menuGFX.h>
+	#include <keyStream.h>
+	#include <genericKeyboard.h>
+	#include <chainStream.h>
 	#include <hwMMI_config.h>
 	//////////////////////////////////////////////////////////////////////////
 
@@ -57,6 +67,14 @@
 		#include <MyRobotLibs\robotModel.h>
 		#include <MyRobotLibs\SpeakSerialInterface.h>
 		#include <MyRobotLibs\CircularBuffer.h>
+
+		#include <ArduinoMenu\src\menu.h>
+		#include <ArduinoMenu\src\macros.h>
+		#include <ArduinoMenu\src\menuUTFT.h>
+		#include <ArduinoMenu\src\chainStream.h>// concatenate multiple input streams (this allows adding a button to the encoder)
+		#include <ArduinoMenu\src\menuFields.h>
+		#include <TimerOne/TimerOne.h>     // ISR on ClickEncoder
+ 
 	#pragma endregion
 #pragma endregion
 
@@ -71,65 +89,6 @@
 	struct robotModel_c robotModel;
 
 
-	#pragma region ROTARY ENCODER
-		#include <Rotary/Rotary.h>	//https://github.com/brianlow/Rotary
-
-
-		volatile int encoder_position = 0;
-		volatile int encoder_delta = 0;
-		int current_encoder_position = 0;
-		int current_encoder_delta = 0;
-
-		Rotary encoder = Rotary(Pin_ROT_ENCODER_A, Pin_ROT_ENCODER_B);
-
-
-		void printEncoderInfo() {
-			SERIAL_PC.print("encoder_position: ");
-			SERIAL_PC.print(current_encoder_position);
-			SERIAL_PC.print(", delta: ");
-			SERIAL_PC.print(current_encoder_delta);
-			SERIAL_PC.print(", dir: ");
-			if (current_encoder_delta>0) SERIAL_PC.println("right");
-			else SERIAL_PC.println("left");
-		}
-
-		bool encoderPositionUpdated() {
-			static int last_position = -999;
-
-			// disable interrupts while we copy the current encoder state
-			uint8_t old_SREG = SREG;
-			cli();
-			current_encoder_position = encoder_position;
-			current_encoder_delta = encoder_delta;
-			SREG = old_SREG;
-
-			bool updated = (current_encoder_position != last_position);
-			last_position = current_encoder_position;
-
-			return updated;
-		}
-
-		/*
-		Interrupt Service Routine:
-		reads the encoder on pin A or B change
-		*/
-		void loadEncoderPositionOnChange() {
-			unsigned char result = encoder.process();
-			if (result == DIR_NONE) {
-				// do nothing
-			}
-			else if (result == DIR_CW) {
-				encoder_delta = 1;
-				encoder_position++;
-			}
-			else if (result == DIR_CCW) {
-				encoder_delta = -1;
-				encoder_position--;
-			}
-		}
-		// buffer circolare dei messaggi ricevuti
-		CircularBuffer<String,5> rxBuf;
-	#pragma endregion
 	// ////////////////////////////////////////////////////////////////////////////////////////////
 
 	// ////////////////////////////////////////////////////////////////////////////////////////////
@@ -148,7 +107,7 @@
 	// ////////////////////////////////////////////////////////////////////////////////////////////
 	//  TFT object  & TOUCH SCREEN
 	// ////////////////////////////////////////////////////////////////////////////////////////////
-	#pragma region LCD LIBRARY & OBJECT
+	#pragma region TFT LIBRARY & OBJECT
 
 		#ifdef TFT_ILI9327_8 // TFT 320x480
 			#pragma region TFT
@@ -314,7 +273,272 @@
 		#define LCD_LED_SERIALCORE_POS_Y 10
 		#include "TFT_HAL\TFT_HAL.h"
 
+		// x lato corto
+		#define TFT_ROWSPACING 20	//Distanza in pixel tra due righe di testo
+		#define TFTROW(r) r*TFT_ROWSPACING	// asse y
+		#define TFTCAPTIONCOL 5 // colonna delle etichette
+		#define TFTDATACOL 100 // colonna dei dati
+
+
+		//////////////////////////////////////////////////////////////////////////////////
+		//////////////////////////////////////////////////////////////////////////////////
+		// Procedure grafiche 
+		//////////////////////////////////////////////////////////////////////////////////
+		#pragma region Procedure grafiche
+			//#define tftLEDON(x,y,c) tft.fillCircle(x, y, LCD_LED_HALF_SIZE, c)
+			#define tftLEDON(x,y,c) tft.setColor(c); tft.fillCircle(x, y, LCD_LED_HALF_SIZE, c)
+
+			void drawFilledRect(int left, int top, int sizeX, int sizeY, int col = VGA_BLACK) {
+				#ifdef TFT_ILI9327_8
+							// coordinate assolute
+							tft.fillRect(left, top, left + sizeX, top + sizeY, col);
+				#endif
+				#ifdef TFT_ili9488
+							// coordinate assolute
+							tft.fillRect(left, top, left + sizeX, top + sizeY, col);
+				#endif
+				#ifdef TFT_ili9341
+							// coordinate relative
+							tft.fillRect(left, top, sizeX, sizeY, col);
+				#endif // 0
+			}
+			// disegna un rettangolo 
+			void drawLedRect(int left, int top, bool value, int ledColorOn = VGA_RED) {
+				#define LEDSIZE 6
+				#define LEDCOLOR_OFF VGA_BLACK
+				if (value)
+				{
+					drawFilledRect(left, top, LEDSIZE, LEDSIZE, ledColorOn);
+				}
+				else
+				{
+					drawFilledRect(left, top, LEDSIZE, LEDSIZE, LEDCOLOR_OFF);
+				}
+			}
+			// disegna un rettangolo e lo riempie in proporzione al valore 
+			void drawGaugeHoriz(int left, int top, int width, int height, int value, int min, int max, int valueColor) {
+				#define GAUGE_COLOR_BCKGROUND VGA_BLACK
+				int v;
+				v = map(value, min, max, 0, width); //map(value, fromLow, fromHigh, toLow, toHigh).
+													//tft.drawFilledRect(left, top,   width, height, BLUE);
+				drawFilledRect(left, top, v, height, valueColor);
+				drawFilledRect(left + v, top, width - v, height, GAUGE_COLOR_BCKGROUND);
+				tft.setColor(valueColor);
+				tft.drawVLine(left + width, top, height);
+			}
+			void drawGauge(int left, int top, int v, int color, int minValue = 0, int maxValue = 1023) {
+				#define GAUGE_W 100
+				#define GAUGE_H 10
+				drawGaugeHoriz(left, top, GAUGE_W, GAUGE_H, v, minValue, maxValue, color);
+			}
+			void drawLinePolar(uint16_t x1, uint16_t y1, double alfaDeg, uint16_t lenght, uint16_t color) {
+				int x2;
+				int y2;
+				x2 = x1 + lenght*cos(alfaDeg);
+				y2 = y1 + lenght*sin(alfaDeg);
+				tft.setColor(color);
+				tft.drawPixel(x2, y2);
+			}
+			void drawPixelPolar(uint16_t x1, uint16_t y1, double alfaDeg, uint16_t lenght, uint16_t color) {
+				int x2;
+				int y2;
+				x2 = x1 + lenght*cos(alfaDeg);
+				y2 = y1 + lenght*sin(alfaDeg);
+				//tft.setColor(VGA_BLACK);
+				//tft.drawLine(x1, y1, x2, y2);
+				tft.setColor(color);
+				tft.drawPixel(x2, y2);
+			}
+			void drawEchoPolar(uint16_t x1, uint16_t y1, double alfaDeg, uint16_t range, uint16_t color) {
+				#define maxRangePixel 50 // raggio in pixel corrispondenti alla distanza massima
+				int x2;
+				int y2;
+				tft.setColor(VGA_BLACK);
+				tft.drawLine(x1, y1, x1 + maxRangePixel*cos(alfaDeg), y1 + maxRangePixel*sin(alfaDeg));
+				uint16_t l = map(range, 0, 1023, 1, maxRangePixel);
+				x2 = x1 + l*cos(alfaDeg);
+				y2 = y1 + l*sin(alfaDeg);
+				tft.setColor(color);
+				tft.drawPixel(x2, y2);
+			}
+
+			
+			// riscrittura testo dopo un clear
+			void tftCaptions(){
+			//char* tftMsg; //= "XYZ";
+			String	sTFT; //stringa di appoggio usata dalla macro TFTprintAtStr
+						  // Caption fisse
+			uint8_t r = 1;
+			drawLedRect(TFTDATACOL, TFTROW(7), 1);
+			tft.setColor(VGA_WHITE);
+
+			TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Op Mode:");
+			TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Free Ram:");
+
+			TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "LT,LNG,Sat:");
+			TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Pot:");
+			TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Vbat:");
+			TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Light:");
+			TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Motion det:");
+			TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Command:");
+
+		}
+		#pragma endregion
+		//////////////////////////////////////////////////////////////////////////////////
+
+
 	#pragma endregion
+
+
+	// ////////////////////////////////////////////////////////////////////////////////////////////
+	//  MENU object  & ROTARY ENCODER SWITCH
+	// ////////////////////////////////////////////////////////////////////////////////////////////
+	#pragma region MENU
+		menuUTFT myMenu(tft);
+
+	#pragma endregion
+
+	#pragma region ROTARY ENCODER
+		#if 1
+			#include <ClickEncoder/ClickEncoder.h>
+			#include <ArduinoMenu\src\ClickEncoderStream.h> // Quad encoder
+
+			ClickEncoder qEnc(Pin_ROT_ENCODER_B, Pin_ROT_ENCODER_A, Pin_ROT_ENCODER_SWITCH, 2, LOW);
+			ClickEncoderStream enc(qEnc, 1);// simple quad encoder fake Stream
+			Stream* menuInputs[] = { &enc,&Serial };
+			chainStream<2> in(menuInputs);
+
+			#pragma region Funzioni del menu
+
+			/////////////////////////////////////////////////////////////////////////
+			// MENU FUNCTION
+			// this functions will be wired to menu options
+			// meaning they will be called on option click/select
+			// or on field value change/update
+			bool mfSayIt(prompt& p, menuOut& o, Stream &c) {
+				tft.setBackColor(0, 0, 0);
+				tft.clrScr();
+				tft.setColor(0, 255, 0);
+				tft.print("Activated option:", 0, 0);
+				tft.print(p.text, 0, 16);
+				o.drawn = 0;
+				delay(1000);
+				tft.clrScr();
+				tftCaptions();
+				return true;
+			}
+			int aValue = 50;
+			float fValue = 101.1;
+			/////////////////////////////////////////////////////////////////////////
+			// MENU DEFINITION
+			// here we define the menu structure and wire actions functions to it
+			MENU(smMode, "Mode..",
+				OP("Autonomous", menu::nothing),
+				OP("Slave", menu::nothing),
+				OP("Demo", menu::nothing)
+			);
+			MENU(smSonar, "Sonar..",
+				FIELD(robotModel.status.parameters.sonarStepAngle, "StepAngle", " °", 1, 45, 1, 0),
+				OP("Slave", menu::nothing),
+				OP("Demo", menu::nothing)
+			);
+			//bool mfDisable(prompt& p, menuOut& o, Stream &c) {
+			//	smSonar.disable();
+			//	return true;
+			//}
+
+
+			/*MENU(menuSetup,"Menu config",
+			FIELD(tft.*/
+
+			MENU(mainMenu, "Robot",
+				OP("Option A", mfSayIt),
+//				OP("Disable sub menu B", mfDisable),
+				SUBMENU(smMode),
+				SUBMENU(smSonar),
+				OP("Option C", mfSayIt),
+				OP("Reboot", OnCmdReboot),
+				FIELD(aValue, "Value", "%", 0, 100, 1, 0),
+				FIELD(robotModel.status.parameters.sonarStepAngle, "Value", " Hz", 1, 100000, 100, 0),
+			);
+			void timerIsr() {
+				qEnc.service();
+			}
+
+	#pragma endregion
+
+
+
+
+
+		#else	//vecchia versione senza  menu
+			#include <Rotary/Rotary.h>	//https://github.com/brianlow/Rotary
+
+
+			volatile int encoder_position = 0;
+			volatile int encoder_delta = 0;
+			int current_encoder_position = 0;
+			int current_encoder_delta = 0;
+
+			Rotary encoder = Rotary(Pin_ROT_ENCODER_A, Pin_ROT_ENCODER_B);
+
+
+			void printEncoderInfo() {
+				SERIAL_PC.print("encoder_position: ");
+				SERIAL_PC.print(current_encoder_position);
+				SERIAL_PC.print(", delta: ");
+				SERIAL_PC.print(current_encoder_delta);
+				SERIAL_PC.print(", dir: ");
+				if (current_encoder_delta>0) SERIAL_PC.println("right");
+				else SERIAL_PC.println("left");
+			}
+
+			bool encoderPositionUpdated() {
+				static int last_position = -999;
+
+				// disable interrupts while we copy the current encoder state
+				uint8_t old_SREG = SREG;
+				cli();
+				current_encoder_position = encoder_position;
+				current_encoder_delta = encoder_delta;
+				SREG = old_SREG;
+
+				bool updated = (current_encoder_position != last_position);
+				last_position = current_encoder_position;
+
+				return updated;
+			}
+
+			/*
+			Interrupt Service Routine:
+			reads the encoder on pin A or B change
+			*/
+			void loadEncoderPositionOnChange() {
+				unsigned char result = encoder.process();
+				if (result == DIR_NONE) {
+					// do nothing
+				}
+				else if (result == DIR_CW) {
+					encoder_delta = 1;
+					encoder_position++;
+				}
+				else if (result == DIR_CCW) {
+					encoder_delta = -1;
+					encoder_position--;
+				}
+			}
+			// buffer circolare dei messaggi ricevuti
+			CircularBuffer<String, 5> rxBuf;
+	#endif // 1
+
+
+#pragma endregion
+
+
+
+
+
+
 #pragma endregion
 
 
@@ -1210,91 +1434,6 @@ static THD_FUNCTION(thdRobotCoreInterface, arg) {
 
 
 
-
-//////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-// Procedure grafiche 
-//////////////////////////////////////////////////////////////////////////////////
-#pragma region Procedure grafiche
-	//#define tftLEDON(x,y,c) tft.fillCircle(x, y, LCD_LED_HALF_SIZE, c)
-	#define tftLEDON(x,y,c) tft.setColor(c); tft.fillCircle(x, y, LCD_LED_HALF_SIZE, c)
-
-	void drawFilledRect(int left, int top, int sizeX, int sizeY, int col = VGA_BLACK) {
-	#ifdef TFT_ILI9327_8
-		// coordinate assolute
-		tft.fillRect(left, top, left + sizeX, top + sizeY, col);
-	#endif
-	#ifdef TFT_ili9488
-		// coordinate assolute
-		tft.fillRect(left, top, left + sizeX, top + sizeY, col);
-	#endif
-	#ifdef TFT_ili9341
-		// coordinate relative
-		tft.fillRect(left, top, sizeX, sizeY, col);
-	#endif // 0
-	}
-	// disegna un rettangolo 
-	void drawLedRect(int left, int top, bool value, int ledColorOn = VGA_RED) {
-	#define LEDSIZE 6
-	#define LEDCOLOR_OFF VGA_BLACK
-		if (value)
-		{
-			drawFilledRect(left, top, LEDSIZE, LEDSIZE, ledColorOn);
-		}
-		else
-		{
-			drawFilledRect(left, top, LEDSIZE, LEDSIZE, LEDCOLOR_OFF);
-		}
-	}
-	// disegna un rettangolo e lo riempie in proporzione al valore 
-	void drawGaugeHoriz(int left, int top, int width, int height, int value, int min, int max, int valueColor) {
-	#define GAUGE_COLOR_BCKGROUND VGA_BLACK
-		int v;
-		v = map(value, min, max, 0, width); //map(value, fromLow, fromHigh, toLow, toHigh).
-											//tft.drawFilledRect(left, top,   width, height, BLUE);
-		drawFilledRect(left, top, v, height, valueColor);
-		drawFilledRect(left + v, top, width - v, height, GAUGE_COLOR_BCKGROUND);
-		tft.setColor(valueColor);
-		tft.drawVLine(left + width, top, height);
-	}
-	void drawGauge(int left, int top, int v, int color, int minValue = 0, int maxValue = 1023) {
-	#define GAUGE_W 100
-	#define GAUGE_H 10
-		drawGaugeHoriz(left, top, GAUGE_W, GAUGE_H, v, minValue, maxValue, color);
-	}
-	void drawLinePolar(uint16_t x1, uint16_t y1, double alfaDeg, uint16_t lenght, uint16_t color) {
-		int x2;
-		int y2;
-		x2 = x1 + lenght*cos(alfaDeg);
-		y2 = y1 + lenght*sin(alfaDeg);
-		tft.setColor(color);
-		tft.drawPixel( x2, y2);
-	}
-	void drawPixelPolar(uint16_t x1, uint16_t y1, double alfaDeg, uint16_t lenght, uint16_t color) {
-		int x2;
-		int y2;
-		x2 = x1 + lenght*cos(alfaDeg);
-		y2 = y1 + lenght*sin(alfaDeg);
-		//tft.setColor(VGA_BLACK);
-		//tft.drawLine(x1, y1, x2, y2);
-		tft.setColor(color);
-		tft.drawPixel(x2, y2);
-	}
-	void drawEchoPolar(uint16_t x1, uint16_t y1, double alfaDeg, uint16_t range, uint16_t color) {
-	#define maxRangePixel 50 // raggio in pixel corrispondenti alla distanza massima
-		int x2;
-		int y2;
-		tft.setColor(VGA_BLACK);
-		tft.drawLine(x1, y1, x1 + maxRangePixel*cos(alfaDeg), y1 + maxRangePixel*sin(alfaDeg));
-		uint16_t l = map(range, 0, 1023, 1, maxRangePixel);
-		x2 = x1 + l*cos(alfaDeg);  		
-		y2 = y1 + l*sin(alfaDeg);
-		tft.setColor(color);
-		tft.drawPixel(x2, y2);
-	}
-#pragma endregion
-//////////////////////////////////////////////////////////////////////////////////
-
 //////////////////////////////////////////////////////////////////////////////////
 //  THREAD  R O T A R Y  E N C O D E R       ///////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////
@@ -1302,6 +1441,9 @@ static THD_FUNCTION(thdRobotCoreInterface, arg) {
 	static THD_WORKING_AREA(waRotaryEncoder, 164);
 	static THD_FUNCTION(RotaryEncoder, arg) {
 		while (1) {
+			mainMenu.poll(myMenu, in);
+
+			/*
 			loadEncoderPositionOnChange();
 			if (encoderPositionUpdated()) {
 				if (encoder_delta>0)
@@ -1325,74 +1467,74 @@ static THD_FUNCTION(thdRobotCoreInterface, arg) {
 			//chThdSleepMilliseconds(200 + current_encoder_position);
 			//digitalWrite(PIN_LED, 0);// Turn LED on.
 			//chThdSleepMilliseconds(200 + current_encoder_position);
+			*/
 			chThdSleepMilliseconds(300);//	chThdYield();//	
-
 		}
 	}
 #pragma endregion 
 
-//////////////////////////////////////////////////////////////////////////////////
-//  THREAD  B R A I N      ///////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-#pragma region  Processo	B R A I N    
-	static THD_WORKING_AREA(waBrain, 100);
-	static THD_FUNCTION(thdBrain, arg) {
-		while (1) {
+	//////////////////////////////////////////////////////////////////////////////////
+	//  THREAD  B R A I N      ///////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////
+	#pragma region  Processo	B R A I N    
+		static THD_WORKING_AREA(waBrain, 100);
+		static THD_FUNCTION(thdBrain, arg) {
+			while (1) {
 
 
- 			chThdSleepMilliseconds(500);//	chThdYield();//	
+ 				chThdSleepMilliseconds(500);//	chThdYield();//	
 
+			}
 		}
-	}
-#pragma endregion 
+	#pragma endregion 
 	//////////////////////////////////////////////////////////////////////////////////
 	//  THREAD  S P E E C H		//////////////////////////////////////////////////////
 	//////////////////////////////////////////////////////////////////////////////////
-#pragma region  Processo	 S P E E C H 
-	// invia parole alla seriale del modulo Speech in base ai flag impostati o allo stato di RobotModel
-	static THD_WORKING_AREA(waSpeech, 100);
-	static THD_FUNCTION(thdSpeech, arg) {
-		SPEAK(" VOCE okei ");	//prova se funziona la voce
+	#pragma region  Processo	 S P E E C H 
+		// invia parole alla seriale del modulo Speech in base ai flag impostati o allo stato di RobotModel
+		static THD_WORKING_AREA(waSpeech, 100);
+		static THD_FUNCTION(thdSpeech, arg) {
+			SPEAK(" VOCE okei ");	//prova se funziona la voce
 
-		while (1) {
-			SPEAK("A");
+			while (1) {
+				SPEAK("A");
 
-			#pragma region HUMAN DETECTION
-				//-------------------------------------------------------------------
-				// chiedo chi sei solo se è attivo il pir da meno di un secondo
-				if ((robotModel.statusOld.sensors.pirDome != robotModel.status.sensors.pirDome)
-					&& (robotModel.status.ts - robotModel.statusOld.ts > 1000))
-				{
-					SPEAK_CIAOCHISEI
-						//resettto lo stato
-						robotModel.statusOld.sensors.pirDome = false;
-				}
-			#pragma endregion
-
-			#pragma region Gestione cambio modalità
-				// Gestione cambio modalità-----------------------------------------
-				// Switch TOP commutato da oltre un secondo?
-				if ((robotModel.status.sensors.switchTop != robotModel.statusOld.sensors.switchTop)
-					&& (robotModel.status.ts - robotModel.statusOld.ts > 1000)) {
-					if (robotModel.status.sensors.switchTop)	//AUTONOMO?
+				#pragma region HUMAN DETECTION
+					//-------------------------------------------------------------------
+					// chiedo chi sei solo se è attivo il pir da meno di un secondo
+					if ((robotModel.statusOld.sensors.pirDome != robotModel.status.sensors.pirDome)
+						&& (robotModel.status.ts - robotModel.statusOld.ts > 1000))
 					{
-
-
-						SPEAK(" okei okei esploro");
+						SPEAK_CIAOCHISEI
+							//resettto lo stato
+							robotModel.statusOld.sensors.pirDome = false;
 					}
-					else // SLAVE
-					{
+				#pragma endregion
 
-						SPEAK(" okei comanda");
+				#pragma region Gestione cambio modalità
+					// Gestione cambio modalità-----------------------------------------
+					// Switch TOP commutato da oltre un secondo?
+					if ((robotModel.status.sensors.switchTop != robotModel.statusOld.sensors.switchTop)
+						&& (robotModel.status.ts - robotModel.statusOld.ts > 1000)) {
+						if (robotModel.status.sensors.switchTop)	//AUTONOMO?
+						{
+
+
+							SPEAK(" okei okei esploro");
+						}
+						else // SLAVE
+						{
+
+							SPEAK(" okei comanda");
+						}
 					}
-				}
-			#pragma endregion
+				#pragma endregion
 
-			chThdSleepMilliseconds(1500);//	chThdYield();//	
+				chThdSleepMilliseconds(1500);//	chThdYield();//	
 
+			}
 		}
-	}
-#pragma endregion 
+	#pragma endregion 
 
 //////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////
@@ -1402,16 +1544,12 @@ static THD_FUNCTION(thdRobotCoreInterface, arg) {
 // Input: RobotStatus
 // Output: TFT
 #pragma region Processo di gestione T F T   M O N I T O R
-	// x lato corto
-	#define TFT_ROWSPACING 20	//Distanza in pixel tra due righe di testo
-	#define TFTROW(r) r*TFT_ROWSPACING	// asse y
-	#define TFTCAPTIONCOL 5 // colonna delle etichette
-	#define TFTDATACOL 100 // colonna dei dati
 	#define SONAR_RANGE_SIZE 50 // raggio in pixel della rappresentazione dei valori sonar
 	static THD_WORKING_AREA(waThreadTFT, 100);
 	static THD_FUNCTION(thdTFT, arg) {
-
-
+		bool HbLed = 0; //stato del led che visualizza l'ttivit� di questo Thread
+		byte r = 1;
+/* spostato in tftCaptions
 	//char* tftMsg; //= "XYZ";
 	String	sTFT; //stringa di appoggio usata dalla macro TFTprintAtStr
 	// Caption fisse
@@ -1429,7 +1567,9 @@ static THD_FUNCTION(thdRobotCoreInterface, arg) {
 	TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Light:");
 	TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Motion det:");
 	TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Command:");
+*/
 
+	tftCaptions();
 	//	chThdSleepMilliseconds(1);//	chThdYield();//	
 
 	//drawButtons();
@@ -1509,13 +1649,20 @@ static THD_FUNCTION(thdRobotCoreInterface, arg) {
 		tft.setColor(VGA_WHITE);
 
 		
+#pragma region Buffer circolare
+#if 0
 		//TFTprintAtStr(TFTDATACOL, TFTROW(r++), *serialRxBuffer);
-		while ((rxBuf.remain()>0 ) && (TFTROW(r)< (TFT_Y_HEIGHT -TFT_ROWSPACING)))
+		while ((rxBuf.remain() > 0) && (TFTROW(r) < (TFT_Y_HEIGHT - TFT_ROWSPACING)))
 		{
 			sTFT = rxBuf.pop();
 			TFTprintAtStr(TFTDATACOL, TFTROW(r++), sTFT);
 		}
 
+#endif // 0
+
+#pragma endregion
+
+#pragma region Mappa Radar
 #if 0
 		// Visualizza la mappa radar ------------------
 		r++;
@@ -1530,6 +1677,8 @@ static THD_FUNCTION(thdRobotCoreInterface, arg) {
 		//---------------------------------------------
 
 #endif // 0
+
+#pragma endregion
 
 		
 			
@@ -1549,556 +1698,556 @@ static THD_FUNCTION(thdRobotCoreInterface, arg) {
 /////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////
 #pragma region THREAD NON ATTIVI
-#if 0
-
-
-//////////////////////////////////////////////////////////////////////////////////
-//  THREAD  B L I N K I N G  L E D									/////////////
-// ///////////////////////////////////////////////////////////////////////////////
-#pragma region // BLINK LED
-#define PIN_LED  Pin_ONBOARD_LED
-
-// 64 byte stack beyond task switch and interrupt needs
-static THD_WORKING_AREA(waFlashLed, 64);
-static THD_FUNCTION(FlashLed, arg) {
-	// Flash led every 200 ms.
-	pinMode(PIN_LED, OUTPUT);		digitalWrite(PIN_LED, 0);	// led superiore
-
-	while (1) {
-
-		// Turn BOARD LED on.
-		digitalWrite(PIN_LED, HIGH);
-		// Turn GREEN LED on.
-		tft.fillCircle(LCD_LED_POS_X, LCD_LED_POS_Y, LCD_LED_HALF_SIZE, VGA_BLACK);
-
-		// Sleep for.. milliseconds.
-		chThdSleepMilliseconds(900);
-
-		// Turn BOARD LED off.
-		digitalWrite(PIN_LED, LOW);
-		// Turn GREEN LED off.
-		tft.fillCircle(LCD_LED_POS_X, LCD_LED_POS_Y, LCD_LED_HALF_SIZE, VGA_GREEN);
-
-		// Sleep for ... milliseconds.
-		chThdSleepMilliseconds(900);
-
-		//speakString("oi")  //output diretto su seriale
-		//SPEAK("ei");	// output via processo FifoToSPEAK
-	}
-}
-#pragma endregion // BLINK LED----------------------------------------------------
-
-
-//////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-// thread 4 - ROS SERIAL
-//////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-/*
-ros::Time time;
-
-ros::NodeHandle  nh;
-
-sensor_msgs::Range range_msg;
-ros::Publisher pub_range("/ultrasound", &range_msg);
-
-const int adc_pin = 0;
-
-unsigned char frameid[] = "/ultrasound";
-
-
-
-long range_time;
-
-static THD_WORKING_AREA(waThreadROS, 200);
-static THD_FUNCTION(ThreadROS, arg) {
-
-// rosserial Ultrasound Example
-//
-// This example is for the Maxbotix Ultrasound rangers.
-
-
-
-nh.initNode();
-nh.advertise(pub_range);
-
-
-range_msg.radiation_type = sensor_msgs::Range::ULTRASOUND;
-range_msg.header.frame_id = frameid;
-range_msg.field_of_view = 0.1;  // fake
-range_msg.min_range = 0.0;
-range_msg.max_range = 6.47;
-
-///pinMode(8, OUTPUT);
-///digitalWrite(8, LOW);
-
-//loop ---------------------------------------------------------------
-while (1) {
-
-//publish the adc value every 50 milliseconds
-//since it takes that long for the sensor to stablize
-int r = 0;
-
-range_msg.range = (float)robotModel.getLaserDistance();
-range_msg.header.stamp = range_msg.header.stamp.now();
-pub_range.publish(&range_msg);
-range_time = millis() + 50;
-
-nh.spinOnce();
-
-chThdSleepMilliseconds(50);// Sleep for n milliseconds.
-}
-//	return 0;
-}
-*/
-
-	//////////////////////////////////////////////////////////////////////////////////
-	//  THREAD ECHO SERIAL_ROBOT > SERIAL_PC       ///////////////////////////////////////////////////////////
-	//////////////////////////////////////////////////////////////////////////////////
-	// FOR TEST ONLY
-	#pragma region  ECHO SERIAL_ROBOT > SERIAL_PC 
-		// 64 byte stack beyond task switch and interrupt needs
-		static THD_WORKING_AREA(waserialEcho, 64);
-		static THD_FUNCTION(serialEcho, arg) {
-			int inByte=0;
-			//sdStart(&ch1, NULL);
-			while (1) {
-				tft.fillCircle(150, LCD_LED_SPEAK_POS_Y, LCD_LED_HALF_SIZE, VGA_LIME);
-
-				if (SERIAL_ROBOT.available() > 0) {
-					playSingleNote(NOTE_A6, 40);
-					inByte = SERIAL_ROBOT.read();
-					SERIAL_PC.write(inByte);
-				}
-				
-
-			
-				chThdSleepMilliseconds(50);//	chThdYield();//	
-			}
-		}
-	#pragma endregion 
-
-
-		// ///////////////////////////////////////////////////////////////////////////////
-		//  THREAD TFT KEYBOARD       ///////////////////////////////////////////////////////////
-		// ///////////////////////////////////////////////////////////////////////////////
-	#pragma region //TFT KEYBOARD
-		/*************************
-		**   Custom functions   **
-		*************************/
-		int x, y;
-		uint16_t xRaw;
-		uint16_t yRaw;
-
-		// Buffer input from TFT keyboard
-		char stCurrent[20] = "";
-		int stCurrentLen = 0;
-		char stLast[20] = "";
-	#define dispy 480
-	#define dispx 320
-	#define BUTT_W 60
-	#define BUTT_H 26
-	#define BUTT2_W 120
-	#define BUTT2_H 28
-		// R1,2,3 posizione y della mezzeria dei Buttons
-	#define R0 340	// riga del buffer keyboard
-	#define R1 380		///WAS 10
-	#define R2 420	/// (R1 + BUTT_H +2)
-	#define R3 460		/// (R1 + 2*BUTT_H +2)
-	#define C1 32
-	#define C2 dispx/2
-	#define C3 dispx-11
-	#define C_B1 80		//clear
-	#define C_B2 250	//enter
-	//class TS_Point {
-	//public:
-	//	TS_Point(void) : x(0), y(0), z(0) {}
-	//	TS_Point(int16_t x, int16_t y, int16_t z) : x(x), y(y), z(z) {}
-	//	bool operator==(TS_Point p) { return ((p.x == x) && (p.y == y) && (p.z == z)); }
-	//	bool operator!=(TS_Point p) { return ((p.x != x) || (p.y != y) || (p.z != z)); }
-	//	uint16_t x, y, z;
-	//};
-
-		void drawButtons()
-		{
-			// Draw the upper row of buttons
-			for (x = 0; x < 5; x++)
-			{
-				tft.setColor(0, 0, 255);
-				tft.fillRoundRect(C1 + (x *(BUTT_W)) - BUTT_W / 2, R1 - BUTT_H / 2, C1 + (x * BUTT_W) + BUTT_W / 2, R1 + BUTT_H / 2);
-				tft.setColor(255, 255, 255);
-				tft.drawRoundRect(C1 + (x * (BUTT_W)) - BUTT_W / 2, R1 - BUTT_H / 2, C1 + (x * BUTT_W) + BUTT_W / 2, R1 + BUTT_H / 2);
-				tft.printNumI(x + 1, 10 + C1 + (x * (BUTT_W)) - BUTT_W / 2, R1 - 5);
-			}
-			// Draw the center row of buttons
-			for (x = 0; x < 5; x++)
-			{
-				tft.setColor(0, 0, 255);
-				tft.fillRoundRect(C1 + (x *(BUTT_W)) - BUTT_W / 2, R2 - BUTT_H / 2, C1 + (x * BUTT_W) + BUTT_W / 2, R2 + BUTT_H / 2);
-				tft.setColor(255, 255, 255);
-				tft.drawRoundRect(C1 + (x * (BUTT_W)) - BUTT_W / 2, R2 - BUTT_H / 2, C1 + (x * BUTT_W) + BUTT_W / 2, R2 + BUTT_H / 2);
-				tft.printNumI(x + 6, 10 + C1 + (x * (BUTT_W)) - BUTT_W / 2, R2 - 5);
-
-				//if (x<4)
-				//   tft.printNumI(x+6, 27+(x*60), 87);
-			}
-			//tft.print("0", 267, 87);
-
-
-			// Draw the lower row of buttons CLEAR & ENTER
-			tft.setColor(0, 0, 255);
-			tft.fillRoundRect(C_B1 - BUTT2_W / 2, R3 - BUTT2_H / 2, C_B1 + BUTT2_W / 2, R3 + BUTT2_H / 2);
-			tft.setColor(255, 255, 255);
-			tft.drawRoundRect(C_B1 - BUTT2_W / 2, R3 - BUTT2_H / 2, C_B1 + BUTT2_W / 2, R3 + BUTT2_H / 2);
-			tft.print("Clear", C_B1 - BUTT2_W / 2 + 4, R3 - 5);
-
-			tft.setColor(0, 0, 255);
-			tft.fillRoundRect(C_B2 - BUTT2_W / 2, R3 - BUTT2_H / 2, C_B2 + BUTT2_W / 2, R3 + BUTT2_H / 2);
-			tft.setColor(255, 255, 255);
-			tft.drawRoundRect(C_B2 - BUTT2_W / 2, R3 - BUTT2_H / 2, C_B2 + BUTT2_W / 2, R3 + BUTT2_H / 2);
-			tft.print("Enter", C_B2 - BUTT2_W / 2 + 4, R3 - 5);
-			tft.setBackColor(0, 0, 0);
-		}
-
-		void updateStr(int val)
-		{
-			if (stCurrentLen < 20)
-			{
-				stCurrent[stCurrentLen] = val;
-				stCurrent[stCurrentLen + 1] = '\0';
-				stCurrentLen++;
-				tft.setColor(VGA_LIME);
-				TFTprintAtStr(C1, R0, stCurrent);
-			}
-			else
-			{
-				tft.setColor(VGA_RED);
-				TFTprintAtStr(C1, R0, "BUFFER FULL!");
-				delay(500);
-				TFTprintAtStr(C1, R0, "            ");
-				delay(500);
-				TFTprintAtStr(C1, R0, "BUFFER FULL!");
-				delay(500);
-				TFTprintAtStr(C1, R0, "            ");
-				//tft.setColor(0, 255, 0);
-			}
-		}
-
-		// Draw a red frame while a button is touched
-		void HighLightButtonUntilRelease(int x1, int y1, int x2, int y2)
-		{
-			tft.setColor(255, 0, 0);
-			tft.drawRoundRect(x1, y1, x2, y2);
-			///while (ts.dataAvailable())
-			while (ts.isTouching()) {
-				chThdSleepMilliseconds(10);//	chThdYield();//	
-
-			};//attende il rilascio del pulsante
-									//	  ts.read();
-			tft.setColor(255, 255, 255);
-			tft.drawRoundRect(x1, y1, x2, y2);
-		}
-
-		void buzz(int targetPin, long frequency, long length) {
-			//digitalWrite(13, HIGH);
-			long delayValue = 1000000 / frequency / 2; // calculate the delay value between transitions
-													   //// 1 second's worth of microseconds, divided by the frequency, then split in half since
-													   //// there are two phases to each cycle
-			long numCycles = frequency * length / 1000; // calculate the number of cycles for proper timing
-														//// multiply frequency, which is really cycles per second, by the number of seconds to
-														//// get the total number of cycles to produce
-			for (long i = 0; i < numCycles; i++) { // for the calculated length of time...
-				digitalWrite(targetPin, HIGH); // write the buzzer pin high to push out the diaphram
-				chThdSleepMicroseconds(delayValue);//	chThdYield();//	
-
-				//delayMicroseconds(delayValue); // wait for the calculated delay value
-				digitalWrite(targetPin, LOW); // write the buzzer pin low to pull back the diaphram
-				//delayMicroseconds(delayValue); // wait again or the calculated delay value
-				chThdSleepMicroseconds(delayValue);//	chThdYield();//	
-
-			}
-			digitalWrite(targetPin, LOW);
-
-		}
-
-		// 64 byte stack beyond task switch and interrupt needs
-		static THD_WORKING_AREA(waTftKeyboard, 64);
-		static THD_FUNCTION(TftKeyboard, arg) {
-			// Touch Screen initialization---------------------------
-			//ts.InitTouch(PORTRAIT);  // include gi� ts.begin();
-			ts.begin(320, 480);
-			ts.setRotation(XPT2046::ROT0);
-			//   ts.setCalibration(209, 1759, 1775, 273);
-	#define PIN_BUZZER 12
-			pinMode(PIN_BUZZER, OUTPUT);//buzzer
-
-			while (1) {
-				if (ts.isTouching())
-				{
-					buzz(PIN_BUZZER, 250, 100);
-
-					TS_Point p;
-					ts.getPosition(p.x, p.y, XPT2046::MODE_DFR, 20);
-					ts.getRaw(xRaw, yRaw, XPT2046::MODE_DFR, 20);
-					x = p.x;
-					y = p.y;
-
-
-					// visualizzo il punto----
-					tft.setColor(VGA_RED);
-					tft.drawPixel(x, y);
-					//------------------------------
-
-
-					//// stampo le coordinate x,y --------
-					//tft.setColor(VGA_LIME);
-					//tft.printNumI(x, 160, 20, 6);
-					//tft.printNumI(y, 160, 40, 6);
-
-
-					//// stampo i dati grezzi ----------
-					//tft.setColor(VGA_BLUE);
-					//tft.printNumI(xRaw, 160, 70, 6);
-					//tft.printNumI(yRaw, 160, 90, 6);
-					//tft.printNumI(ts.getZ(), 160, 110,6);
-
-
-	#if 1
-	#pragma region individuazione del pulsante premuto
-					int n = 0;
-					if ((y >= R1 - BUTT_H / 2) && (y <= R1 + BUTT_H / 2))  // Upper row
-					{
-						n = 0;
-						if ((x >= C1 - BUTT_W / 2) && (x <= C1 + BUTT_W / 2)) // Button: 1
-						{
-							buzz(PIN_BUZZER, 210, 100);
-							HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R1 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R1 + BUTT_H / 2);
-							updateStr('1');
-						}
-						n = 1;
-						if ((x > (C1 + (n *(BUTT_W)) - BUTT_W / 2)) && (x <= C1 + (n * BUTT_W) + BUTT_W / 2))  // Button: 2
-						{
-							buzz(PIN_BUZZER, 220, 100);
-
-							HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R1 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R1 + BUTT_H / 2);
-							updateStr('2');
-						}
-
-
-						n = 2;
-						if ((x > (C1 + (n *(BUTT_W)) - BUTT_W / 2)) && (x <= C1 + (n * BUTT_W) + BUTT_W / 2))  // Button: 3
-						{
-							buzz(PIN_BUZZER, 330, 100);
-
-							HighLightButtonUntilRelease(C1 + (n *BUTT_W) - BUTT_W / 2, R1 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R1 + BUTT_H / 2);
-							updateStr('3');
-						}
-
-
-						n = 3;
-						if ((x > (C1 + (n *BUTT_W) - BUTT_W / 2)) && (x <= C1 + (n * BUTT_W) + BUTT_W / 2))  // Button: 4
-						{
-							buzz(PIN_BUZZER, 350, 100);
-							HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R1 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R1 + BUTT_H / 2);
-							updateStr('4');
-						}
-
-
-						n = 4;
-						if ((x > (C1 + (n *(BUTT_W)) - BUTT_W / 2)) && (x <= C1 + (n * BUTT_W) + BUTT_W / 2))  // Button: 5
-						{
-							buzz(PIN_BUZZER, 360, 100);
-							HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R1 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R1 + BUTT_H / 2);
-							updateStr('5');
-						}
-					}
-					/// PULSANTI DA 6 A 0
-					if ((y >= R2 - BUTT_H / 2) && (y <= R2 + BUTT_H / 2))  // Center row
-					{
-						n = 0;
-						if ((x >= C1 - BUTT_W / 2) && (x <= C1 + BUTT_W / 2)) // Button: 6
-						{
-							HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R2 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R2 + BUTT_H / 2);
-							updateStr('6');
-						}
-						n = 1;
-						if ((x > (C1 + (n *(BUTT_W)) - BUTT_W / 2)) && (x <= C1 + (n * BUTT_W) + BUTT_W / 2))  // Button: 7
-						{
-							HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R2 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R2 + BUTT_H / 2);
-							updateStr('7');
-						}
-
-
-						n = 2;
-						if ((x > (C1 + (n *(BUTT_W)) - BUTT_W / 2)) && (x <= C1 + (n * BUTT_W) + BUTT_W / 2))  // Button: 8
-						{
-							HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R2 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R2 + BUTT_H / 2);
-							updateStr('8');
-						}
-
-
-						n = 3;
-						if ((x > (C1 + (n *(BUTT_W)) - BUTT_W / 2)) && (x <= C1 + (n * BUTT_W) + BUTT_W / 2))  // Button:9
-						{
-							HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R2 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R2 + BUTT_H / 2);
-							updateStr('9');
-						}
-
-
-						n = 4;
-						if ((x > (C1 + (n *(BUTT_W)) - BUTT_W / 2)) && (x <= C1 + (n * BUTT_W) + BUTT_W / 2))  // Button: 0
-						{
-							HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R2 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R2 + BUTT_H / 2);
-							updateStr('0');
-						}
-					}
-					/// PULSANTI CLEAR E ENTER -----------------------------------------
-					if ((y >= R3 - BUTT2_H / 2) && (y <= R3 + BUTT2_H / 2))  // Upper row
-					{
-						if ((x >= C_B1 - BUTT2_W / 2) && (x <= C_B1 + BUTT2_W / 2))  // Button: Clear
-						{
-							// HighLightButtonUntilRelease(10, 130, 150, 180);
-							HighLightButtonUntilRelease(C_B1 - BUTT2_W / 2, R3 - BUTT2_H / 2, C_B1 + BUTT2_W / 2, R3 - BUTT2_H / 2);
-							stCurrent[0] = '\0';
-							stCurrentLen = 0;
-
-							// esegue un clear dell'area del display
-							tft.setColor(0, 0, 0);
-							tft.fillRect(0, 224, 320, R1 - BUTT_H);
-						}
-						if ((x >= C_B2 - BUTT2_W / 2) && (x <= C_B2 + BUTT2_W / 2))  // Button: Enter
-						{
-							//HighLightButtonUntilRelease(160, 130, 300, 180);
-							HighLightButtonUntilRelease(C_B2 - BUTT2_W / 2, R3 - BUTT2_H / 2, C_B2 + BUTT2_W / 2, R3 - BUTT2_H / 2);
-							if (stCurrentLen > 0)
-							{
-								for (x = 0; x < stCurrentLen + 1; x++)
-								{
-									stLast[x] = stCurrent[x];
-								}
-								stCurrent[0] = '\0';
-								stCurrentLen = 0;
-								tft.setColor(0, 0, 0);
-								tft.fillRect(0, 208, 319, 239);
-								tft.setColor(0, 255, 0);
-								tft.print(stLast, LEFT, 208);
-							}
-							else
-							{
-								tft.setColor(255, 0, 0);
-								tft.print("BUFFER EMPTY", CENTER, 192);
-								delay(500);
-								tft.print("            ", CENTER, 192);
-								delay(500);
-								tft.print("BUFFER EMPTY", CENTER, 192);
-								delay(500);
-								tft.print("            ", CENTER, 192);
-								tft.setColor(0, 255, 0);
-							}
-						}
-					}
-
-	#pragma endregion
-
-
-	#endif // 0
-
-				}
-
-				chThdSleepMilliseconds(100);//	chThdYield();//	
-
-			}
-		}
-	#pragma endregion // TFT KEYBOARD----------------------------------------------------
+	#if 0
 
 
 		//////////////////////////////////////////////////////////////////////////////////
-		// THREAD FiFo ->  SPEAK     ///////////////////////////////////////////////////////////
+		//  THREAD  B L I N K I N G  L E D									/////////////
+		// ///////////////////////////////////////////////////////////////////////////////
+		#pragma region // BLINK LED
+		#define PIN_LED  Pin_ONBOARD_LED
+
+		// 64 byte stack beyond task switch and interrupt needs
+		static THD_WORKING_AREA(waFlashLed, 64);
+		static THD_FUNCTION(FlashLed, arg) {
+			// Flash led every 200 ms.
+			pinMode(PIN_LED, OUTPUT);		digitalWrite(PIN_LED, 0);	// led superiore
+
+			while (1) {
+
+				// Turn BOARD LED on.
+				digitalWrite(PIN_LED, HIGH);
+				// Turn GREEN LED on.
+				tft.fillCircle(LCD_LED_POS_X, LCD_LED_POS_Y, LCD_LED_HALF_SIZE, VGA_BLACK);
+
+				// Sleep for.. milliseconds.
+				chThdSleepMilliseconds(900);
+
+				// Turn BOARD LED off.
+				digitalWrite(PIN_LED, LOW);
+				// Turn GREEN LED off.
+				tft.fillCircle(LCD_LED_POS_X, LCD_LED_POS_Y, LCD_LED_HALF_SIZE, VGA_GREEN);
+
+				// Sleep for ... milliseconds.
+				chThdSleepMilliseconds(900);
+
+				//speakString("oi")  //output diretto su seriale
+				//SPEAK("ei");	// output via processo FifoToSPEAK
+			}
+		}
+		#pragma endregion // BLINK LED----------------------------------------------------
+
+
 		//////////////////////////////////////////////////////////////////////////////////
-	#pragma region Processo: FiFo -> SPEAK
-		/* FiFo ->  SPEAK non serve più,
-		da riutilizzare per processi a bassa priorità Fifo >>Seriale
-		// il formato stringhe ricevuto via Blutetooth è *...# dove ... è il testo inviato
-		static THD_WORKING_AREA(waFifoToSPEAK, 64);
-		static THD_FUNCTION(FifoToSPEAK, arg) {
-		SERIAL_SPEAK.begin(SERIAL_SPEAK_BAUD_RATE);
-		SERIAL_SPEAK.setTimeout(5000);
+		//////////////////////////////////////////////////////////////////////////////////
+		// thread 4 - ROS SERIAL
+		//////////////////////////////////////////////////////////////////////////////////
+		//////////////////////////////////////////////////////////////////////////////////
+		/*
+		ros::Time time;
+
+		ros::NodeHandle  nh;
+
+		sensor_msgs::Range range_msg;
+		ros::Publisher pub_range("/ultrasound", &range_msg);
+
+		const int adc_pin = 0;
+
+		unsigned char frameid[] = "/ultrasound";
 
 
-		#pragma region  [speakTest Iniziale speak]
 
-		SERIAL_SPEAK.print(" Hello voce okei");
+		long range_time;
 
+		static THD_WORKING_AREA(waThreadROS, 200);
+		static THD_FUNCTION(ThreadROS, arg) {
 
-		#if dbg
-		speakNumber(1);
-		delay(500);
-		speakNumber((uint16_t)437);
-		delay(500);
-		strcpy(SpeakBuffer, "126");
-		speakNumberStr(SpeakBuffer);
-		delay(500);
-		#endif // dbg
-
-		#pragma endregion
+		// rosserial Ultrasound Example
+		//
+		// This example is for the Maxbotix Ultrasound rangers.
 
 
+
+		nh.initNode();
+		nh.advertise(pub_range);
+
+
+		range_msg.radiation_type = sensor_msgs::Range::ULTRASOUND;
+		range_msg.header.frame_id = frameid;
+		range_msg.field_of_view = 0.1;  // fake
+		range_msg.min_range = 0.0;
+		range_msg.max_range = 6.47;
+
+		///pinMode(8, OUTPUT);
+		///digitalWrite(8, LOW);
+
+		//loop ---------------------------------------------------------------
 		while (1) {
-		playSingleNote(NOTE_A7, 40);
-		// Turn PROCESS LED on.
-		tft.fillCircle(LCD_LED_SPEAK_POS_X, LCD_LED_SPEAK_POS_Y, LCD_LED_HALF_SIZE, VGA_OLIVE);
 
-		PoolObject_t *p;
+		//publish the adc value every 50 milliseconds
+		//since it takes that long for the sensor to stablize
+		int r = 0;
 
-		// get mailVoice
-		chMBFetch(&mailVoice, (msg_t*)&p, TIME_INFINITE);
+		range_msg.range = (float)robotModel.getLaserDistance();
+		range_msg.header.stamp = range_msg.header.stamp.now();
+		pub_range.publish(&range_msg);
+		range_time = millis() + 50;
 
+		nh.spinOnce();
 
-		// Invia la stringa voce sulla seriale
-		SERIAL_SPEAK.print(p->str);
-
-
-		// put memory back into pool
-		chPoolFree(&memPool, p);
-
-		chThdSleepMilliseconds(200);//	chThdYield();//
+		chThdSleepMilliseconds(50);// Sleep for n milliseconds.
 		}
+		//	return 0;
 		}
 		*/
 
-	#pragma endregion
+			//////////////////////////////////////////////////////////////////////////////////
+			//  THREAD ECHO SERIAL_ROBOT > SERIAL_PC       ///////////////////////////////////////////////////////////
+			//////////////////////////////////////////////////////////////////////////////////
+			// FOR TEST ONLY
+			#pragma region  ECHO SERIAL_ROBOT > SERIAL_PC 
+				// 64 byte stack beyond task switch and interrupt needs
+				static THD_WORKING_AREA(waserialEcho, 64);
+				static THD_FUNCTION(serialEcho, arg) {
+					int inByte=0;
+					//sdStart(&ch1, NULL);
+					while (1) {
+						tft.fillCircle(150, LCD_LED_SPEAK_POS_Y, LCD_LED_HALF_SIZE, VGA_LIME);
 
-	//////////////////////////////////////////////////////////////////////////////////
-	// M O N I T O R	   ///////////////////////////////////////////////////////////
-	//////////////////////////////////////////////////////////////////////////////////
-	#pragma region Processo di MONITOR
-	static THD_WORKING_AREA(waThreadMonitor, 64);
-	static THD_FUNCTION(ThreadMonitor, arg) {
-		while (true)
-		{
-			dbg("M.")
-			//Serial.print(F("    waFifoFeed unused stack: "));
-			//Serial.println(chUnusedStack(waFifoFeed, sizeof(waFifoFeed)));
-			//Serial.print(F("    overrun errors: "));
-			//Serial.println( OverrunErrorCount);
-			Serial.print(F("Ram: "));
-			Serial.println(getFreeSram());
+						if (SERIAL_ROBOT.available() > 0) {
+							playSingleNote(NOTE_A6, 40);
+							inByte = SERIAL_ROBOT.read();
+							SERIAL_PC.write(inByte);
+						}
+				
 
-			//count++;
-			////FIFO_SPEAK.push(int2str(count));
-			//uint32_t t = micros();
-			//// yield so other threads can run
-			//chThdYield();
-			//t = micros() - t;
-			//if (t > maxDelay) maxDelay = t;
+			
+						chThdSleepMilliseconds(50);//	chThdYield();//	
+					}
+				}
+			#pragma endregion 
 
-			chThdSleepMilliseconds(2000);//	chThdYield();//	
-		}
 
-	}
+				// ///////////////////////////////////////////////////////////////////////////////
+				//  THREAD TFT KEYBOARD       ///////////////////////////////////////////////////////////
+				// ///////////////////////////////////////////////////////////////////////////////
+			#pragma region //TFT KEYBOARD
+				/*************************
+				**   Custom functions   **
+				*************************/
+				int x, y;
+				uint16_t xRaw;
+				uint16_t yRaw;
 
-	#pragma endregion 
-#endif // 0
+				// Buffer input from TFT keyboard
+				char stCurrent[20] = "";
+				int stCurrentLen = 0;
+				char stLast[20] = "";
+			#define dispy 480
+			#define dispx 320
+			#define BUTT_W 60
+			#define BUTT_H 26
+			#define BUTT2_W 120
+			#define BUTT2_H 28
+				// R1,2,3 posizione y della mezzeria dei Buttons
+			#define R0 340	// riga del buffer keyboard
+			#define R1 380		///WAS 10
+			#define R2 420	/// (R1 + BUTT_H +2)
+			#define R3 460		/// (R1 + 2*BUTT_H +2)
+			#define C1 32
+			#define C2 dispx/2
+			#define C3 dispx-11
+			#define C_B1 80		//clear
+			#define C_B2 250	//enter
+			//class TS_Point {
+			//public:
+			//	TS_Point(void) : x(0), y(0), z(0) {}
+			//	TS_Point(int16_t x, int16_t y, int16_t z) : x(x), y(y), z(z) {}
+			//	bool operator==(TS_Point p) { return ((p.x == x) && (p.y == y) && (p.z == z)); }
+			//	bool operator!=(TS_Point p) { return ((p.x != x) || (p.y != y) || (p.z != z)); }
+			//	uint16_t x, y, z;
+			//};
+
+				void drawButtons()
+				{
+					// Draw the upper row of buttons
+					for (x = 0; x < 5; x++)
+					{
+						tft.setColor(0, 0, 255);
+						tft.fillRoundRect(C1 + (x *(BUTT_W)) - BUTT_W / 2, R1 - BUTT_H / 2, C1 + (x * BUTT_W) + BUTT_W / 2, R1 + BUTT_H / 2);
+						tft.setColor(255, 255, 255);
+						tft.drawRoundRect(C1 + (x * (BUTT_W)) - BUTT_W / 2, R1 - BUTT_H / 2, C1 + (x * BUTT_W) + BUTT_W / 2, R1 + BUTT_H / 2);
+						tft.printNumI(x + 1, 10 + C1 + (x * (BUTT_W)) - BUTT_W / 2, R1 - 5);
+					}
+					// Draw the center row of buttons
+					for (x = 0; x < 5; x++)
+					{
+						tft.setColor(0, 0, 255);
+						tft.fillRoundRect(C1 + (x *(BUTT_W)) - BUTT_W / 2, R2 - BUTT_H / 2, C1 + (x * BUTT_W) + BUTT_W / 2, R2 + BUTT_H / 2);
+						tft.setColor(255, 255, 255);
+						tft.drawRoundRect(C1 + (x * (BUTT_W)) - BUTT_W / 2, R2 - BUTT_H / 2, C1 + (x * BUTT_W) + BUTT_W / 2, R2 + BUTT_H / 2);
+						tft.printNumI(x + 6, 10 + C1 + (x * (BUTT_W)) - BUTT_W / 2, R2 - 5);
+
+						//if (x<4)
+						//   tft.printNumI(x+6, 27+(x*60), 87);
+					}
+					//tft.print("0", 267, 87);
+
+
+					// Draw the lower row of buttons CLEAR & ENTER
+					tft.setColor(0, 0, 255);
+					tft.fillRoundRect(C_B1 - BUTT2_W / 2, R3 - BUTT2_H / 2, C_B1 + BUTT2_W / 2, R3 + BUTT2_H / 2);
+					tft.setColor(255, 255, 255);
+					tft.drawRoundRect(C_B1 - BUTT2_W / 2, R3 - BUTT2_H / 2, C_B1 + BUTT2_W / 2, R3 + BUTT2_H / 2);
+					tft.print("Clear", C_B1 - BUTT2_W / 2 + 4, R3 - 5);
+
+					tft.setColor(0, 0, 255);
+					tft.fillRoundRect(C_B2 - BUTT2_W / 2, R3 - BUTT2_H / 2, C_B2 + BUTT2_W / 2, R3 + BUTT2_H / 2);
+					tft.setColor(255, 255, 255);
+					tft.drawRoundRect(C_B2 - BUTT2_W / 2, R3 - BUTT2_H / 2, C_B2 + BUTT2_W / 2, R3 + BUTT2_H / 2);
+					tft.print("Enter", C_B2 - BUTT2_W / 2 + 4, R3 - 5);
+					tft.setBackColor(0, 0, 0);
+				}
+
+				void updateStr(int val)
+				{
+					if (stCurrentLen < 20)
+					{
+						stCurrent[stCurrentLen] = val;
+						stCurrent[stCurrentLen + 1] = '\0';
+						stCurrentLen++;
+						tft.setColor(VGA_LIME);
+						TFTprintAtStr(C1, R0, stCurrent);
+					}
+					else
+					{
+						tft.setColor(VGA_RED);
+						TFTprintAtStr(C1, R0, "BUFFER FULL!");
+						delay(500);
+						TFTprintAtStr(C1, R0, "            ");
+						delay(500);
+						TFTprintAtStr(C1, R0, "BUFFER FULL!");
+						delay(500);
+						TFTprintAtStr(C1, R0, "            ");
+						//tft.setColor(0, 255, 0);
+					}
+				}
+
+				// Draw a red frame while a button is touched
+				void HighLightButtonUntilRelease(int x1, int y1, int x2, int y2)
+				{
+					tft.setColor(255, 0, 0);
+					tft.drawRoundRect(x1, y1, x2, y2);
+					///while (ts.dataAvailable())
+					while (ts.isTouching()) {
+						chThdSleepMilliseconds(10);//	chThdYield();//	
+
+					};//attende il rilascio del pulsante
+											//	  ts.read();
+					tft.setColor(255, 255, 255);
+					tft.drawRoundRect(x1, y1, x2, y2);
+				}
+
+				void buzz(int targetPin, long frequency, long length) {
+					//digitalWrite(13, HIGH);
+					long delayValue = 1000000 / frequency / 2; // calculate the delay value between transitions
+															   //// 1 second's worth of microseconds, divided by the frequency, then split in half since
+															   //// there are two phases to each cycle
+					long numCycles = frequency * length / 1000; // calculate the number of cycles for proper timing
+																//// multiply frequency, which is really cycles per second, by the number of seconds to
+																//// get the total number of cycles to produce
+					for (long i = 0; i < numCycles; i++) { // for the calculated length of time...
+						digitalWrite(targetPin, HIGH); // write the buzzer pin high to push out the diaphram
+						chThdSleepMicroseconds(delayValue);//	chThdYield();//	
+
+						//delayMicroseconds(delayValue); // wait for the calculated delay value
+						digitalWrite(targetPin, LOW); // write the buzzer pin low to pull back the diaphram
+						//delayMicroseconds(delayValue); // wait again or the calculated delay value
+						chThdSleepMicroseconds(delayValue);//	chThdYield();//	
+
+					}
+					digitalWrite(targetPin, LOW);
+
+				}
+
+				// 64 byte stack beyond task switch and interrupt needs
+				static THD_WORKING_AREA(waTftKeyboard, 64);
+				static THD_FUNCTION(TftKeyboard, arg) {
+					// Touch Screen initialization---------------------------
+					//ts.InitTouch(PORTRAIT);  // include gi� ts.begin();
+					ts.begin(320, 480);
+					ts.setRotation(XPT2046::ROT0);
+					//   ts.setCalibration(209, 1759, 1775, 273);
+			#define PIN_BUZZER 12
+					pinMode(PIN_BUZZER, OUTPUT);//buzzer
+
+					while (1) {
+						if (ts.isTouching())
+						{
+							buzz(PIN_BUZZER, 250, 100);
+
+							TS_Point p;
+							ts.getPosition(p.x, p.y, XPT2046::MODE_DFR, 20);
+							ts.getRaw(xRaw, yRaw, XPT2046::MODE_DFR, 20);
+							x = p.x;
+							y = p.y;
+
+
+							// visualizzo il punto----
+							tft.setColor(VGA_RED);
+							tft.drawPixel(x, y);
+							//------------------------------
+
+
+							//// stampo le coordinate x,y --------
+							//tft.setColor(VGA_LIME);
+							//tft.printNumI(x, 160, 20, 6);
+							//tft.printNumI(y, 160, 40, 6);
+
+
+							//// stampo i dati grezzi ----------
+							//tft.setColor(VGA_BLUE);
+							//tft.printNumI(xRaw, 160, 70, 6);
+							//tft.printNumI(yRaw, 160, 90, 6);
+							//tft.printNumI(ts.getZ(), 160, 110,6);
+
+
+			#if 1
+			#pragma region individuazione del pulsante premuto
+							int n = 0;
+							if ((y >= R1 - BUTT_H / 2) && (y <= R1 + BUTT_H / 2))  // Upper row
+							{
+								n = 0;
+								if ((x >= C1 - BUTT_W / 2) && (x <= C1 + BUTT_W / 2)) // Button: 1
+								{
+									buzz(PIN_BUZZER, 210, 100);
+									HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R1 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R1 + BUTT_H / 2);
+									updateStr('1');
+								}
+								n = 1;
+								if ((x > (C1 + (n *(BUTT_W)) - BUTT_W / 2)) && (x <= C1 + (n * BUTT_W) + BUTT_W / 2))  // Button: 2
+								{
+									buzz(PIN_BUZZER, 220, 100);
+
+									HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R1 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R1 + BUTT_H / 2);
+									updateStr('2');
+								}
+
+
+								n = 2;
+								if ((x > (C1 + (n *(BUTT_W)) - BUTT_W / 2)) && (x <= C1 + (n * BUTT_W) + BUTT_W / 2))  // Button: 3
+								{
+									buzz(PIN_BUZZER, 330, 100);
+
+									HighLightButtonUntilRelease(C1 + (n *BUTT_W) - BUTT_W / 2, R1 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R1 + BUTT_H / 2);
+									updateStr('3');
+								}
+
+
+								n = 3;
+								if ((x > (C1 + (n *BUTT_W) - BUTT_W / 2)) && (x <= C1 + (n * BUTT_W) + BUTT_W / 2))  // Button: 4
+								{
+									buzz(PIN_BUZZER, 350, 100);
+									HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R1 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R1 + BUTT_H / 2);
+									updateStr('4');
+								}
+
+
+								n = 4;
+								if ((x > (C1 + (n *(BUTT_W)) - BUTT_W / 2)) && (x <= C1 + (n * BUTT_W) + BUTT_W / 2))  // Button: 5
+								{
+									buzz(PIN_BUZZER, 360, 100);
+									HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R1 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R1 + BUTT_H / 2);
+									updateStr('5');
+								}
+							}
+							/// PULSANTI DA 6 A 0
+							if ((y >= R2 - BUTT_H / 2) && (y <= R2 + BUTT_H / 2))  // Center row
+							{
+								n = 0;
+								if ((x >= C1 - BUTT_W / 2) && (x <= C1 + BUTT_W / 2)) // Button: 6
+								{
+									HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R2 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R2 + BUTT_H / 2);
+									updateStr('6');
+								}
+								n = 1;
+								if ((x > (C1 + (n *(BUTT_W)) - BUTT_W / 2)) && (x <= C1 + (n * BUTT_W) + BUTT_W / 2))  // Button: 7
+								{
+									HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R2 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R2 + BUTT_H / 2);
+									updateStr('7');
+								}
+
+
+								n = 2;
+								if ((x > (C1 + (n *(BUTT_W)) - BUTT_W / 2)) && (x <= C1 + (n * BUTT_W) + BUTT_W / 2))  // Button: 8
+								{
+									HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R2 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R2 + BUTT_H / 2);
+									updateStr('8');
+								}
+
+
+								n = 3;
+								if ((x > (C1 + (n *(BUTT_W)) - BUTT_W / 2)) && (x <= C1 + (n * BUTT_W) + BUTT_W / 2))  // Button:9
+								{
+									HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R2 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R2 + BUTT_H / 2);
+									updateStr('9');
+								}
+
+
+								n = 4;
+								if ((x > (C1 + (n *(BUTT_W)) - BUTT_W / 2)) && (x <= C1 + (n * BUTT_W) + BUTT_W / 2))  // Button: 0
+								{
+									HighLightButtonUntilRelease(C1 + (n *(BUTT_W)) - BUTT_W / 2, R2 - BUTT_H / 2, C1 + (n * BUTT_W) + BUTT_W / 2, R2 + BUTT_H / 2);
+									updateStr('0');
+								}
+							}
+							/// PULSANTI CLEAR E ENTER -----------------------------------------
+							if ((y >= R3 - BUTT2_H / 2) && (y <= R3 + BUTT2_H / 2))  // Upper row
+							{
+								if ((x >= C_B1 - BUTT2_W / 2) && (x <= C_B1 + BUTT2_W / 2))  // Button: Clear
+								{
+									// HighLightButtonUntilRelease(10, 130, 150, 180);
+									HighLightButtonUntilRelease(C_B1 - BUTT2_W / 2, R3 - BUTT2_H / 2, C_B1 + BUTT2_W / 2, R3 - BUTT2_H / 2);
+									stCurrent[0] = '\0';
+									stCurrentLen = 0;
+
+									// esegue un clear dell'area del display
+									tft.setColor(0, 0, 0);
+									tft.fillRect(0, 224, 320, R1 - BUTT_H);
+								}
+								if ((x >= C_B2 - BUTT2_W / 2) && (x <= C_B2 + BUTT2_W / 2))  // Button: Enter
+								{
+									//HighLightButtonUntilRelease(160, 130, 300, 180);
+									HighLightButtonUntilRelease(C_B2 - BUTT2_W / 2, R3 - BUTT2_H / 2, C_B2 + BUTT2_W / 2, R3 - BUTT2_H / 2);
+									if (stCurrentLen > 0)
+									{
+										for (x = 0; x < stCurrentLen + 1; x++)
+										{
+											stLast[x] = stCurrent[x];
+										}
+										stCurrent[0] = '\0';
+										stCurrentLen = 0;
+										tft.setColor(0, 0, 0);
+										tft.fillRect(0, 208, 319, 239);
+										tft.setColor(0, 255, 0);
+										tft.print(stLast, LEFT, 208);
+									}
+									else
+									{
+										tft.setColor(255, 0, 0);
+										tft.print("BUFFER EMPTY", CENTER, 192);
+										delay(500);
+										tft.print("            ", CENTER, 192);
+										delay(500);
+										tft.print("BUFFER EMPTY", CENTER, 192);
+										delay(500);
+										tft.print("            ", CENTER, 192);
+										tft.setColor(0, 255, 0);
+									}
+								}
+							}
+
+			#pragma endregion
+
+
+			#endif // 0
+
+						}
+
+						chThdSleepMilliseconds(100);//	chThdYield();//	
+
+					}
+				}
+			#pragma endregion // TFT KEYBOARD----------------------------------------------------
+
+
+				//////////////////////////////////////////////////////////////////////////////////
+				// THREAD FiFo ->  SPEAK     ///////////////////////////////////////////////////////////
+				//////////////////////////////////////////////////////////////////////////////////
+			#pragma region Processo: FiFo -> SPEAK
+				/* FiFo ->  SPEAK non serve più,
+				da riutilizzare per processi a bassa priorità Fifo >>Seriale
+				// il formato stringhe ricevuto via Blutetooth è *...# dove ... è il testo inviato
+				static THD_WORKING_AREA(waFifoToSPEAK, 64);
+				static THD_FUNCTION(FifoToSPEAK, arg) {
+				SERIAL_SPEAK.begin(SERIAL_SPEAK_BAUD_RATE);
+				SERIAL_SPEAK.setTimeout(5000);
+
+
+				#pragma region  [speakTest Iniziale speak]
+
+				SERIAL_SPEAK.print(" Hello voce okei");
+
+
+				#if dbg
+				speakNumber(1);
+				delay(500);
+				speakNumber((uint16_t)437);
+				delay(500);
+				strcpy(SpeakBuffer, "126");
+				speakNumberStr(SpeakBuffer);
+				delay(500);
+				#endif // dbg
+
+				#pragma endregion
+
+
+				while (1) {
+				playSingleNote(NOTE_A7, 40);
+				// Turn PROCESS LED on.
+				tft.fillCircle(LCD_LED_SPEAK_POS_X, LCD_LED_SPEAK_POS_Y, LCD_LED_HALF_SIZE, VGA_OLIVE);
+
+				PoolObject_t *p;
+
+				// get mailVoice
+				chMBFetch(&mailVoice, (msg_t*)&p, TIME_INFINITE);
+
+
+				// Invia la stringa voce sulla seriale
+				SERIAL_SPEAK.print(p->str);
+
+
+				// put memory back into pool
+				chPoolFree(&memPool, p);
+
+				chThdSleepMilliseconds(200);//	chThdYield();//
+				}
+				}
+				*/
+
+			#pragma endregion
+
+			//////////////////////////////////////////////////////////////////////////////////
+			// M O N I T O R	   ///////////////////////////////////////////////////////////
+			//////////////////////////////////////////////////////////////////////////////////
+			#pragma region Processo di MONITOR
+			static THD_WORKING_AREA(waThreadMonitor, 64);
+			static THD_FUNCTION(ThreadMonitor, arg) {
+				while (true)
+				{
+					dbg("M.")
+					//Serial.print(F("    waFifoFeed unused stack: "));
+					//Serial.println(chUnusedStack(waFifoFeed, sizeof(waFifoFeed)));
+					//Serial.print(F("    overrun errors: "));
+					//Serial.println( OverrunErrorCount);
+					Serial.print(F("Ram: "));
+					Serial.println(getFreeSram());
+
+					//count++;
+					////FIFO_SPEAK.push(int2str(count));
+					//uint32_t t = micros();
+					//// yield so other threads can run
+					//chThdYield();
+					//t = micros() - t;
+					//if (t > maxDelay) maxDelay = t;
+
+					chThdSleepMilliseconds(2000);//	chThdYield();//	
+				}
+
+			}
+
+			#pragma endregion 
+	#endif // 0
 
 #pragma endregion
 
@@ -2148,7 +2297,7 @@ void chSetup() {
 	*/
 	chThdCreateStatic(waRobotCoreInterface, sizeof(waRobotCoreInterface), NORMALPRIO + 2, thdRobotCoreInterface, NULL);
 	chThdCreateStatic(waComandiBT, sizeof(waComandiBT), NORMALPRIO + 2, thdComandiBT, NULL);
-	chThdCreateStatic(waThreadTFT, sizeof(waThreadTFT), NORMALPRIO + 2, thdTFT, NULL);
+	chThdCreateStatic(waThreadTFT, sizeof(waThreadTFT), NORMALPRIO + 3, thdTFT, NULL);
 //	chThdCreateStatic(waBtCommands, sizeof(waBtCommands), NORMALPRIO+2, thdCommands, NULL);
 	chThdCreateStatic(waRotaryEncoder, sizeof(waRotaryEncoder), NORMALPRIO + 2, RotaryEncoder, NULL);
 	chThdCreateStatic(waSpeech, sizeof(waSpeech), NORMALPRIO + 2, thdSpeech, NULL);
@@ -2159,6 +2308,7 @@ void chSetup() {
 	//chThdCreateStatic(waFifoToSPEAK, sizeof(waFifoToSPEAK), NORMALPRIO+3, FifoToSPEAK, NULL);
 	while (1) {}
 }
+
 
 void setup()
 {	
@@ -2231,11 +2381,33 @@ void setup()
 	#pragma endregion
 
 			
-	#pragma region Setup Interrupts for Rotary Encoders
-		attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_A), loadEncoderPositionOnChange, CHANGE);
-		attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_B), loadEncoderPositionOnChange, CHANGE);
+#if 0		//vecchia versione funzionante prima di usare ArduinoMenu
+#pragma region Setup Interrupts for Rotary Encoders
+			attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_A), loadEncoderPositionOnChange, CHANGE);
+			attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_B), loadEncoderPositionOnChange, CHANGE);
 
-	#pragma endregion
+#pragma endregion
+#else
+			//al posto di Timer1 + funzione TimerIsr() uso direttamente gli interupt
+			Timer1.initialize(5000); // every 0.05 seconds
+			Timer1.attachInterrupt(timerIsr);
+			//attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_A), timerIsr, CHANGE);
+			//attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_B), timerIsr, CHANGE);
+			qEnc.setAccelerationEnabled(false);
+			qEnc.setDoubleClickEnabled(true); // must be on otherwise the menu library Hang
+											  // ISR init
+
+			myMenu.init();//setup geometry after tft initialized
+						  //restrict menu area, for scroll and boundary tests
+			myMenu.maxX = 30; //larghezza max menu
+			myMenu.maxY = 8;  //numero di voci del menu 
+			mainMenu.setPosition(5, 380);
+			mainMenu.data[1]->enabled = false;
+			myMenu.bgColor = VGA_GRAY;
+			//myMenu.enabledColor = VGA_BLUE;
+			myMenu.disabledColor = VGA_BLACK;
+
+#endif // 0
 
 
 	dbg("MMI");
