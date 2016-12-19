@@ -1,9 +1,13 @@
-//////////////////////////////////////////////////////////////////////////////////
+// ////////////////////////////////////////////////////////////////////////////////
+
 // I N T E R F A C C I A   M M I                //////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
+
+// ////////////////////////////////////////////////////////////////////////////////
 
 //////////////////////////////////////////////////////////////////////////////////
+
 // CONFIGURAZIONE DEL SISTEMA                  ///////////////////////////////////
+
 //////////////////////////////////////////////////////////////////////////////////
 #pragma region CONFIGURAZIONE DEL SISTEMA 
 	
@@ -11,26 +15,19 @@
 	//////////////////////////////////////////////////////////////////////////
 	// C O N F I G U R A Z I O N E  H A R D W A R E							//
 	//////////////////////////////////////////////////////////////////////////
-	#include <quadEncoder.h>
-	#include <menuUTouch.h>
-	//#include <menuU8G.h>
-	//#include <menuPrint.h>
-	//#include <menuLCDs.h>
-	//#include <menuLCD.h>
-	//#include <menuGFX.h>
-	#include <keyStream.h>
-	#include <genericKeyboard.h>
-	#include <chainStream.h>
-	#include <hwMMI_config.h>
-	//////////////////////////////////////////////////////////////////////////
+	#pragma region Includes dei driver HW
+		#include <Arduino.h>
+		#include <hwMMI_config.h>
+		#include <SPI.h>
+		#include <XPT2046-2\XPT2046-2.h>	//touch controller, deve stare prima di UTFT
+		#include <UTFT.h>						//display TFT
+		#include <buzzer\buzzer.h>
+		#include <ClickEncoder/ClickEncoder.h>
 
+		#include "hardwareIncludes.h"
+		#include <SoftwareSerial.h>
 
-	// TFT TYPE                Uncomment one of the following----------
-	#define TFT_ILI9327_8	//x:320 X y:480 con driver 	
-	//#define TFT_ili9341
-	//#define TFT_ili9488	
-
-	//#define T 1000
+	#pragma endregion
 
 	//////////////////////////////////////////////////////////////////////////
 	// OPZIONI DI D E B U G													//
@@ -54,13 +51,42 @@
 	// LIBRERIE                                    ///////////////////////////////////
 	//////////////////////////////////////////////////////////////////////////////////
 	#pragma region Librerie
+
+		#pragma region Librerie senza dipendenze
+			//#include <TimerOne/TimerOne.h>     // serve a ArduinoMenu, ISR on ClickEncoder
+
+		#pragma endregion
+		#pragma region Librerie ArduinoMenu
+			#include <Arduino.h>
+			#include <ClickEncoder/ClickEncoder.h>
+			#include <ClickEncoderStream.h> // Quad encoder
+			#include <TimerOne.h>     // ISR on ClickEncoder
+
+			#include <menu.h>
+			#include <macros.h>
+			#include <menuUTFT.h>
+			#include <chainStream.h>// concatenate multiple input streams (this allows adding a button to the encoder)
+				//#include <menuUTouch.h>
+			#include <menuFields.h>
+
+			//#include <ArduinoMenu\src\menu.h>
+			//#include <ArduinoMenu\src\chainStream.h>// concatenate multiple input streams (this allows adding a button to the encoder)
+			//#include <ArduinoMenu\src\ClickEncoderStream.h> // Quad encoder, usa menu.h, ClickEncoder
+			//#include <ArduinoMenu\src\macros.h>
+			//#include <ArduinoMenu\src\menuUTFT.h>	//#include <menuGFX.h>
+			//#include <ArduinoMenu\src\menuFields.h>
+			//#include <ArduinoMenu\src\quadEncoder.h>
+			//#include <ArduinoMenu\src\menuUTouch.h>
+			//#include <ArduinoMenu\src\keyStream.h>
+			//#include <ArduinoMenu\src\genericKeyboard.h>
+		#pragma endregion
+
 		#include <ChibiOS_AVR/ChibiOS_AVR.h>
 		#include <SoftwareSerial.h>		//C:\Program Files %28x86%29\Arduino\hardware\arduino\avr\libraries\SoftwareSerial
 		#include <TinyGPSplus\TinyGPS++.h>	//se manca non compila a causa del robotModel.cpp nella stessa cartella di robot\Commands_Enum.h
 
 		#include <string.h> 
-		#include "stringlib.h"
- 		#include <buzzer\buzzer.h>
+		#include "stringlib.h" //Funzioni di manipolazione stringhe di tipo CHARARRAY
 		//#include <digitalWriteFast.h>
 		//#include <CmdMessenger/CmdMessenger.h>
 		//#include <robot\Commands_Enum.h>
@@ -68,340 +94,61 @@
 		#include <MyRobotLibs\SpeakSerialInterface.h>
 		#include <MyRobotLibs\CircularBuffer.h>
 
-		#include <ArduinoMenu\src\menu.h>
-		#include <ArduinoMenu\src\macros.h>
-		#include <ArduinoMenu\src\menuUTFT.h>
-		#include <ArduinoMenu\src\chainStream.h>// concatenate multiple input streams (this allows adding a button to the encoder)
-		#include <ArduinoMenu\src\menuFields.h>
-		#include <TimerOne/TimerOne.h>     // ISR on ClickEncoder
- 
+		//// ROS
+		//#include <ros_lib/ros/ros.h>
+		//#include <ros_lib/ros/duration.h>
+		//#include <ros_lib/ros/time.h> //non serve
+		//#include <ros_lib/sensor_msgs/Range.h>
+
 	#pragma endregion
 #pragma endregion
 
 
+/// ////////////////////////////////////////////////////////////////////////////////////////////
 // ////////////////////////////////////////////////////////////////////////////////////////////
-//  CREAZIONE OGGETTI GLOBALI
+/// ////////////////////////////////////////////////////////////////////////////////////////////
+//
+///
+//  C R E A Z I O N E  O G G E T T I  G L O B A L I
+///
+//
+/// ////////////////////////////////////////////////////////////////////////////////////////////
 // ////////////////////////////////////////////////////////////////////////////////////////////
+/// ////////////////////////////////////////////////////////////////////////////////////////////
 #pragma region CREAZIONE OGGETTI GLOBALI
-	//#include <servo/src/Servo.h> //deve restare qui altrimenti il linker s'incazza (??)
+
+	#pragma region TFT
+		//UTFT     tft(ILI9327_8,30,31,32,33 );		//was 38, 39, 40, 41
+		UTFT     tft(ILI9327_8, Pin_TFT_RS, Pin_TFT_WR, Pin_TFT_CS, Pin_TFT_RST);		//was 38, 39, 40, 41
+		TS_Point p;
+	#pragma endregion
+
+	#pragma region robotModel
+		//#include <servo/src/Servo.h> //deve restare qui altrimenti il linker s'incazza (??)
 	// ////////////////////////////////////////////////////////////////////////////////////////////
 	// MODELLO ROBOT
-	struct robotModel_c robotModel;
+		struct robotModel_c robotModel;
+	#pragma endregion
 
-
-	// ////////////////////////////////////////////////////////////////////////////////////////////
-
-	// ////////////////////////////////////////////////////////////////////////////////////////////
-	//  CmdMessenger object to the default Serial port
-	#pragma region COMMAND MESSENGER
+	#pragma region OGGETTI COMMAND MESSENGER:  cmdRobotCore e cmdBT
 		#include <CmdMessenger2/CmdMessenger2.h>
 		static CmdMessenger2 cmdRobotCore = CmdMessenger2(SERIAL_ROBOT);
 		static CmdMessenger2 cmdBT = CmdMessenger2(SERIAL_BT);
 		//void SPEAK(char inStr[]);
-
+		
 
 		#include "RobotInterfaceCommandsMMI.h"
 	#pragma endregion
 	// ////////////////////////////////////////////////////////////////////////////////////////////
 
-	// ////////////////////////////////////////////////////////////////////////////////////////////
-	//  TFT object  & TOUCH SCREEN
-	// ////////////////////////////////////////////////////////////////////////////////////////////
-	#pragma region TFT LIBRARY & OBJECT
-
-		#ifdef TFT_ILI9327_8 // TFT 320x480
-			#pragma region TFT
-				#define TFT_X_WIDTH 320
-				#define TFT_Y_HEIGHT 480
-				#include <UTFT\UTFT.h>
-				//UTFT     tft(ILI9327_8,30,31,32,33 );		//was 38, 39, 40, 41
-				UTFT     tft(ILI9327_8, Pin_TFT_RS, Pin_TFT_WR, Pin_TFT_CS, Pin_TFT_RST);		//was 38, 39, 40, 41
-
-				//extern uint8_t BigFont[];
-				extern uint8_t SmallFont[];
-
-//#define TFTprintAtStr(x,y,s) sTFT=s; tft.print( sTFT,x,y) così non visualizza le stringhe!!
-				#define TFTprintAtStr(x,y,s)   tft.print( s ,x,y)
-				//#define TFTprintAtNumF(x,y,d,decimals) tft.printNumF( d,decimals,x,y)
-				#define TFTprintAtNumF(x,y,d,decimals,VGAcolor) tft.setColor(VGAcolor); tft.printNumF( d,decimals,x,y)
-//				#define TFTprintAtNumI(x,y,i) tft.printNumI(i,x,y)
-				#define TFTprintAtNumI(x,y,i,VGAcolor) tft.setColor(VGAcolor);tft.printNumI(i,x,y)
-		
-			#pragma endregion
-
-			//#pragma region touch screen
-			//	#include <XPT2046/XPT2046.h>
-
-			//	#define CS_PIN  53	///was 9
-			//	#define TIRQ_PIN  2
-			//	XPT2046 ts(CS_PIN, TIRQ_PIN);  // Param 2 - Touch IRQ Pin - interrupt enabled polling
-			//#pragma endregion
-
-			// Initialize touchscreen
-			#pragma region touch screen
-			#include <SPI.h>
-
-
-				//#define  TS1	//Touch screen  driver XPT2046_Touchscreen
-			#define  TS2	//Touch screen  driver XPT2046-2
-
-			#ifdef  TS1
-			#include <XPT2046_Touchscreen\XPT2046_Touchscreen.h>
-			#define isTouching() touched()
-			#else
-			#include <XPT2046-2/XPT2046-2.h>
-
-			#endif // TS1
-
-
-
-				//class TS_Point {
-				//public:
-				//	TS_Point(void) : x(0), y(0), z(0) {}
-				//	TS_Point(int16_t x, int16_t y, int16_t z) : x(x), y(y), z(z) {}
-				//	bool operator==(TS_Point p) { return ((p.x == x) && (p.y == y) && (p.z == z)); }
-				//	bool operator!=(TS_Point p) { return ((p.x != x) || (p.y != y) || (p.z != z)); }
-				//	uint16_t x, y, z;
-				//};
-				//#include <XPT2046\XPT2046.h>
-
-
-				//XPT2046 ts(CS_PIN, TIRQ_PIN);  // Param 2 - Touch IRQ Pin - interrupt enabled polling
-			#ifdef TS1
-					XPT2046_Touchscreen ts((uint8_t)Pin_TS_CS, (uint8_t)Pin_TS_TIRQ);  // Param 2 - Touch IRQ Pin - interrupt enabled polling
-			#else
-
-					XPT2046 ts((uint8_t)Pin_TS_CS, (uint8_t)Pin_TS_TIRQ);  // Param 2 - Touch IRQ Pin - interrupt enabled polling
-
-			#endif // TS1
-
-
-			#pragma endregion
-
-
-		#endif
-		#ifdef TFT_ili9488
-
-			#pragma region TFT
-				#define TFT_X_WIDTH 240
-				#define TFT_Y_HEIGHT 320
-				#include <UTFT\UTFT.h>
-				UTFT    tft(ILI9327_8, 38, 39, 40, 41);
-
-				#define TFTprintAtStr(x,y,s) tft.print(s,x,y)
-				#define TFTprintAtNumF(x,y,d,decimals) tft.printNumF( d,decimals,x,y)
-				#define TFTprintAtNumI(x,y,i) tft.printNumI(i,x,y)
-
-			#pragma endregion
-
-			#pragma region touch screen
-				#include <UTouch.h>
-				UTouch  myTouch(6, 5, 4, 3, 2);
-			#pragma endregion
-		#endif
-		#ifdef  SPFD5408
-
-		#include <SPFD5408/SPFD5408_Adafruit_GFX.h>    // Core graphics library
-		#include <SPFD5408/SPFD5408_Adafruit_TFTLCD.h> // Hardware-specific library
-		//#include <SPFD5408_TouchScreen.h>
-		// The control pins for the LCD can be assigned to any digital or
-		// analog pins...but we'll use the analog pins as this allows us to
-		// double up the pins with the touch screen (see the TFT paint example).
-		#define LCD_CS A3 // Chip Select goes to Analog 3
-		#define LCD_CD A2 // Command/Data goes to Analog 2
-		#define LCD_WR A1 // LCD Write goes to Analog 1
-		#define LCD_RD A0 // LCD Read goes to Analog 0
-
-		#define LCD_RESET A4 // Can alternately just connect to Arduino's reset pin
-
-		// When using the BREAKOUT BOARD only, use these 8 data lines to the LCD:
-		// For the Arduino Uno, Duemilanove, Diecimila, etc.:
-		//   D0 connects to digital pin 8  (Notice these are
-		//   D1 connects to digital pin 9   NOT in order!)
-		//   D2 connects to digital pin 2
-		//   D3 connects to digital pin 3
-		//   D4 connects to digital pin 4
-		//   D5 connects to digital pin 5
-		//   D6 connects to digital pin 6
-		//   D7 connects to digital pin 7
-		// For the Arduino Mega, use digital pins 22 through 29
-		// (on the 2-row header at the end of the board).
-
-		// Assign human-readable names to some common 16-bit color values:
-
-
-		#define LCD_CS A3
-		#define LCD_CD A2
-		#define LCD_WR A1
-		#define LCD_RD A0
-		// optional
-		#define LCD_RESET A4
-
-
-		Adafruit_TFTLCD tft(LCD_CS, LCD_CD, LCD_WR, LCD_RD, LCD_RESET);
-		#define TFTprintAtStr(x,y,s) tft.print(s,x,y)
-		#define TFTprintAtNumF(x,y,d,decimals) tft.printNumF( d,decimals,x,y)
-		#define TFTprintAtNumI(x,y,i) tft.printNumI(i,x,y)
-
-		#endif // 1 
-
-		#define LCD_TEXT_HEIGHT 16 // Height of text to be printed and scrolled
-		#define LCD_TEXT_WIDTH 10
-
-		#define LCD_TEXTCOLOR MAGENTA
-		#define LCD_BACKGROUND BLACK
-		#define LCD_TEXTSIZE 2		//20 righe di 24 caratteri (19righe utili se uso la prima come stato con size =1)
-		#define LCD_CHAR_COLUMNS 24
-		// The scrolling area must be a integral multiple of LCD_TEXT_HEIGHT
-		#define LCD_BOT_FIXED_AREA 0 // Number of lines in bottom fixed area (lines counted from bottom of screen)
-		#define LCD_TOP_FIXED_AREA 24 // 16Number of lines in top fixed area (lines counted from top of screen)
-		# define LCD_SCROLL_ROWS 5
-
-		// ///////////////////////////////////////////////////////////////////
-		//  Profilazione della posizione dei vari componenti degli oggetti TFT
-		#define LCD_LED_HALF_SIZE 6
-
-		//Posizione del LED  del processo BLINK
-		#define LCD_LED_POS_X 10
-		#define LCD_LED_POS_Y 10
-		//Posizione del LED  del processo FifoToSPEAK
-		#define LCD_LED_SPEAK_POS_X 100
-		#define LCD_LED_SPEAK_POS_Y 10
- 
-		//Posizione del LED  del processo Serial
-		#define LCD_LED_SERIALCORE_POS_X 150
-		#define LCD_LED_SERIALCORE_POS_Y 10
 		#include "TFT_HAL\TFT_HAL.h"
-
-		// x lato corto
-		#define TFT_ROWSPACING 20	//Distanza in pixel tra due righe di testo
-		#define TFTROW(r) r*TFT_ROWSPACING	// asse y
-		#define TFTCAPTIONCOL 5 // colonna delle etichette
-		#define TFTDATACOL 100 // colonna dei dati
-
-
-		//////////////////////////////////////////////////////////////////////////////////
-		//////////////////////////////////////////////////////////////////////////////////
-		// Procedure grafiche 
-		//////////////////////////////////////////////////////////////////////////////////
-		#pragma region Procedure grafiche
-			//#define tftLEDON(x,y,c) tft.fillCircle(x, y, LCD_LED_HALF_SIZE, c)
-			#define tftLEDON(x,y,c) tft.setColor(c); tft.fillCircle(x, y, LCD_LED_HALF_SIZE, c)
-
-			void drawFilledRect(int left, int top, int sizeX, int sizeY, int col = VGA_BLACK) {
-				#ifdef TFT_ILI9327_8
-							// coordinate assolute
-							tft.fillRect(left, top, left + sizeX, top + sizeY, col);
-				#endif
-				#ifdef TFT_ili9488
-							// coordinate assolute
-							tft.fillRect(left, top, left + sizeX, top + sizeY, col);
-				#endif
-				#ifdef TFT_ili9341
-							// coordinate relative
-							tft.fillRect(left, top, sizeX, sizeY, col);
-				#endif // 0
-			}
-			// disegna un rettangolo 
-			void drawLedRect(int left, int top, bool value, int ledColorOn = VGA_RED) {
-				#define LEDSIZE 6
-				#define LEDCOLOR_OFF VGA_BLACK
-				if (value)
-				{
-					drawFilledRect(left, top, LEDSIZE, LEDSIZE, ledColorOn);
-				}
-				else
-				{
-					drawFilledRect(left, top, LEDSIZE, LEDSIZE, LEDCOLOR_OFF);
-				}
-			}
-			// disegna un rettangolo e lo riempie in proporzione al valore 
-			void drawGaugeHoriz(int left, int top, int width, int height, int value, int min, int max, int valueColor) {
-				#define GAUGE_COLOR_BCKGROUND VGA_BLACK
-				int v;
-				v = map(value, min, max, 0, width); //map(value, fromLow, fromHigh, toLow, toHigh).
-													//tft.drawFilledRect(left, top,   width, height, BLUE);
-				drawFilledRect(left, top, v, height, valueColor);
-				drawFilledRect(left + v, top, width - v, height, GAUGE_COLOR_BCKGROUND);
-				tft.setColor(valueColor);
-				tft.drawVLine(left + width, top, height);
-			}
-			void drawGauge(int left, int top, int v, int color, int minValue = 0, int maxValue = 1023) {
-				#define GAUGE_W 100
-				#define GAUGE_H 10
-				drawGaugeHoriz(left, top, GAUGE_W, GAUGE_H, v, minValue, maxValue, color);
-			}
-			void drawLinePolar(uint16_t x1, uint16_t y1, double alfaDeg, uint16_t lenght, uint16_t color) {
-				int x2;
-				int y2;
-				x2 = x1 + lenght*cos(alfaDeg);
-				y2 = y1 + lenght*sin(alfaDeg);
-				tft.setColor(color);
-				tft.drawPixel(x2, y2);
-			}
-			void drawPixelPolar(uint16_t x1, uint16_t y1, double alfaDeg, uint16_t lenght, uint16_t color) {
-				int x2;
-				int y2;
-				x2 = x1 + lenght*cos(alfaDeg);
-				y2 = y1 + lenght*sin(alfaDeg);
-				//tft.setColor(VGA_BLACK);
-				//tft.drawLine(x1, y1, x2, y2);
-				tft.setColor(color);
-				tft.drawPixel(x2, y2);
-			}
-			void drawEchoPolar(uint16_t x1, uint16_t y1, double alfaDeg, uint16_t range, uint16_t color) {
-				#define maxRangePixel 50 // raggio in pixel corrispondenti alla distanza massima
-				int x2;
-				int y2;
-				tft.setColor(VGA_BLACK);
-				tft.drawLine(x1, y1, x1 + maxRangePixel*cos(alfaDeg), y1 + maxRangePixel*sin(alfaDeg));
-				uint16_t l = map(range, 0, 1023, 1, maxRangePixel);
-				x2 = x1 + l*cos(alfaDeg);
-				y2 = y1 + l*sin(alfaDeg);
-				tft.setColor(color);
-				tft.drawPixel(x2, y2);
-			}
-
-			
-			// riscrittura testo dopo un clear
-			void tftCaptions(){
-			//char* tftMsg; //= "XYZ";
-			String	sTFT; //stringa di appoggio usata dalla macro TFTprintAtStr
-						  // Caption fisse
-			uint8_t r = 1;
-			drawLedRect(TFTDATACOL, TFTROW(7), 1);
-			tft.setColor(VGA_WHITE);
-
-			TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Op Mode:");
-			TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Free Ram:");
-
-			TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "LT,LNG,Sat:");
-			TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Pot:");
-			TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Vbat:");
-			TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Light:");
-			TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Motion det:");
-			TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Command:");
-
-		}
-		#pragma endregion
-		//////////////////////////////////////////////////////////////////////////////////
-
-
-	#pragma endregion
-
 
 	// ////////////////////////////////////////////////////////////////////////////////////////////
 	//  MENU object  & ROTARY ENCODER SWITCH
 	// ////////////////////////////////////////////////////////////////////////////////////////////
-	#pragma region MENU
-		menuUTFT myMenu(tft);
-
-	#pragma endregion
-
-	#pragma region ROTARY ENCODER
+	#pragma region OGGGETTI MENU CON ROTARY ENCODER
+ 		menuUTFT myMenu(tft);
 		#if 1
-			#include <ClickEncoder/ClickEncoder.h>
-			#include <ArduinoMenu\src\ClickEncoderStream.h> // Quad encoder
 
 			ClickEncoder qEnc(Pin_ROT_ENCODER_B, Pin_ROT_ENCODER_A, Pin_ROT_ENCODER_SWITCH, 2, LOW);
 			ClickEncoderStream enc(qEnc, 1);// simple quad encoder fake Stream
@@ -411,10 +158,56 @@
 			#pragma region Funzioni del menu
 
 			/////////////////////////////////////////////////////////////////////////
-			// MENU FUNCTION
+			// MENU FUNCTIONS
 			// this functions will be wired to menu options
 			// meaning they will be called on option click/select
 			// or on field value change/update
+			bool mfSayIt(prompt& p, menuOut& o, Stream &c);
+			bool mfSetModeAutonomous();
+			bool mfSetModeSlave();
+			bool mfTestSpeech();
+
+			int aValue = 50;
+			float fValue = 101.1;
+			/////////////////////////////////////////////////////////////////////////
+			// MENU DEFINITION
+			// here we define the menu structure and wire actions functions to it
+			
+			
+
+			//MENU(subMenu,"Mode",
+			//	OP("Autonomous", mfSetModeAutonomous),
+			//	OP("Slave", mfSetModeSlave),
+			//	);
+			//bool mfDisable(prompt& p, menuOut& o, Stream &c) {
+			//	smSonar.mfDisable();
+			//	return true;
+			//}
+
+
+			/*MENU(menuSetup,"Menu config",
+			FIELD(tft.*/
+
+			//MENU(mainMenu,"Robot",
+			//	OP("Autonomous",mfSetModeAutonomous),
+			//	OP("Slave",mfSetModeSlave)
+			//);
+			MENU(subMenu, "Set Mode"
+				,OP("Autonomous", mfSetModeAutonomous)
+				,OP("slave", mfSetModeSlave)
+ 			);
+
+			MENU(mainMenu, "Sistema"
+ 				,OP("Option C", mfSayIt)
+				,OP("Speech Test", mfTestSpeech)
+
+				,FIELD(aValue, "Value", "%", 0, 100, 1, 0)
+				,FIELD(aValue, "Value", "%", 0, 100, 1, 0)
+				,FIELD(robotModel.status.sensors.analog[1], "A1", " n.", 1, 60000, 10, 1)
+				,SUBMENU(subMenu)
+			);
+
+			// messe dopo per poter chiamare menu.redraw();
 			bool mfSayIt(prompt& p, menuOut& o, Stream &c) {
 				tft.setBackColor(0, 0, 0);
 				tft.clrScr();
@@ -424,52 +217,37 @@
 				o.drawn = 0;
 				delay(1000);
 				tft.clrScr();
-				tftCaptions();
+				tftPrintCaptions();
 				return true;
 			}
-			int aValue = 50;
-			float fValue = 101.1;
-			/////////////////////////////////////////////////////////////////////////
-			// MENU DEFINITION
-			// here we define the menu structure and wire actions functions to it
-			MENU(smMode, "Mode..",
-				OP("Autonomous", menu::nothing),
-				OP("Slave", menu::nothing),
-				OP("Demo", menu::nothing)
-			);
-			MENU(smSonar, "Sonar..",
-				FIELD(robotModel.status.parameters.sonarStepAngle, "StepAngle", " °", 1, 45, 1, 0),
-				OP("Slave", menu::nothing),
-				OP("Demo", menu::nothing)
-			);
+			bool mfSetModeAutonomous() {
+				robotModel.SetMode(MODE_AUTONOMOUS);
+				playSingleNote(NOTE_A7, 80);
+				myMenu.redraw();
+				return true;
+			}
+			bool mfSetModeSlave() {
+				robotModel.SetMode(MODE_SLAVE);
+				playSingleNote(NOTE_D7, 80);
+				myMenu.redraw();
+				return true;
+			}
+			bool mfTestSpeech() {
+				SPEAK_TEST
+				myMenu.redraw();
+				return true;
+
+			}
 			//bool mfDisable(prompt& p, menuOut& o, Stream &c) {
-			//	smSonar.disable();
+			//	subMenu.disable();
 			//	return true;
 			//}
 
-
-			/*MENU(menuSetup,"Menu config",
-			FIELD(tft.*/
-
-			MENU(mainMenu, "Robot",
-				OP("Option A", mfSayIt),
-//				OP("Disable sub menu B", mfDisable),
-				SUBMENU(smMode),
-				SUBMENU(smSonar),
-				OP("Option C", mfSayIt),
-				OP("Reboot", OnCmdReboot),
-				FIELD(aValue, "Value", "%", 0, 100, 1, 0),
-				FIELD(robotModel.status.parameters.sonarStepAngle, "Value", " Hz", 1, 100000, 100, 0),
-			);
 			void timerIsr() {
 				qEnc.service();
 			}
 
 	#pragma endregion
-
-
-
-
 
 		#else	//vecchia versione senza  menu
 			#include <Rotary/Rotary.h>	//https://github.com/brianlow/Rotary
@@ -496,7 +274,7 @@
 			bool encoderPositionUpdated() {
 				static int last_position = -999;
 
-				// disable interrupts while we copy the current encoder state
+				// mfDisable interrupts while we copy the current encoder state
 				uint8_t old_SREG = SREG;
 				cli();
 				current_encoder_position = encoder_position;
@@ -534,58 +312,110 @@
 
 #pragma endregion
 
-
-
-
+ 
 
 
 #pragma endregion
 
 
+// ////////////////////////////////////////////////////////////////////////////////////////////
+// ////////////////////////////////////////////////////////////////////////////////////////////
+//
+//  INCLUDES CHE VANNO DOPO LA CREAZIONE DEGLI OGGETTI GLOBALI
+//
+// ////////////////////////////////////////////////////////////////////////////////////////////
+// ////////////////////////////////////////////////////////////////////////////////////////////
+#pragma region INCLUDES che vanno dopo la definizione degli oggetti globali
 
-
-
-
+#pragma endregion
 
 // ////////////////////////////////////////////////////////////////////////////////////////////
+///
 //  P A R A M E T R I  E  V A R I A B I L I  G L O B A L I
+///
 // ////////////////////////////////////////////////////////////////////////////////////////////
-
 #pragma region Variabili globali
 
-	//////////////////////////////////////////////////////////////////////////////////
-	//VARIABILI GLOBALI CONDIVISE TRA I PROCESSI   ///////////////////////////////////
-	//////////////////////////////////////////////////////////////////////////////////
-	//char SpeakBuffer[INPUTCHARARRAYSIZE];	//buffer per il parlato in SP0256-AL2.h
+	/// ///////////////////////////////////////////////////////////////////////////////
+	// VARIABILI GLOBALI CONDIVISE TRA I PROCESSI   ///////////////////////////////////
+	/// ///////////////////////////////////////////////////////////////////////////////
 	volatile uint32_t count = 0;
 	volatile uint32_t maxDelay = 0;
 	char * serialRxBuffer[SERIAL_RX_BUFFER_SIZE];
 
 	//------------------------------------------------------------------------------
-	#pragma region DEFINIZIONE MAILBOX VOICE
-	// mailbox size and memory pool object count
-	const size_t MB_COUNT = 6;
+	//------------------------------------------------------------------------------
+	#pragma region MAILBOX VOICE
 
-	// type for a memory pool object
-	struct PoolObject_t {
-		char* name;
-		char str[INPUTCHARARRAYSIZE];
-		int size;
-	};
-	// array of memory pool objects
-	PoolObject_t PoolObject[MB_COUNT];
+		// mailbox size and memory pool object count
+		const size_t MBOX_CAPACITY_VOICE = 6;
+		int mailBoxVoiceFreeCounter = MBOX_CAPACITY_VOICE; //conta quante locazioni sono disponibili
+		#define INPUTCHARARRAYSIZE 50
+		// type for a memory pool object
+		struct PoolObject_t {
+			char* strSpeech;
+			char str[INPUTCHARARRAYSIZE];
+			int size;
+		};
+		// array of memory pool objects
+		PoolObject_t PoolObject[MBOX_CAPACITY_VOICE];
 
-	// memory pool structure
-	MEMORYPOOL_DECL(memPool, MB_COUNT, 0);
+		// memory pool structure
+		MEMORYPOOL_DECL(memPoolVoice, MBOX_CAPACITY_VOICE, 0);
 
-	// slots for mailbox messages
-	msg_t letter[MB_COUNT];
+		// slots for mailbox messages
+		msg_t letter[MBOX_CAPACITY_VOICE];
 
-	// mailbox structure
-	MAILBOX_DECL(mailVoice, &letter, MB_COUNT);
+		// mailbox structure
+		MAILBOX_DECL(mailVoice, &letter, MBOX_CAPACITY_VOICE);
+
+		/// ///////////////////////////////////////////////////////////////////////////////
+		//  METTE IN CODA LA STRINGA DA PRONUNCIARE  AL TASK SPEAK    /////////////////// 
+		/// ///////////////////////////////////////////////////////////////////////////////
+		//uso: SPEAK("ei");	// output via processo FifoToSPEAK
+		void sendMsg(mailbox_t mailVoice, msg_t p) {
+			// send message
+			msg_t s = chMBPost(&mailVoice, (msg_t)p, TIME_IMMEDIATE);
+			if (s != MSG_OK) { Serial.println("chMBPost failed");	while (1); }
+
+		}
+		void speakSerial(const char inStr[]) {
+			// get object from memory pool
+			mailBoxVoiceFreeCounter--;
+			dbg2("Free mbox-: ",mailBoxVoiceFreeCounter);
+			PoolObject_t* p = (PoolObject_t*)chPoolAlloc(&memPoolVoice);
+			if (!p) { Serial.println("chPoolAlloc failed from speakSerial");	while (1); }
+
+
+			// form message
+			p->strSpeech = (char*)inStr;		// (char*)strSpeech;
+																//p->strSpeech = " imbecille spostati che devo passare";		// (char*)strSpeech;
+																//strcpy(p->str, "oi");
+																//p->size = 2;
+																//dbg2("thdFeedFifo send: ",p->strSpeech)
+
+																// send message
+			msg_t s = chMBPost(&mailVoice, (msg_t)p, TIME_IMMEDIATE);
+			if (s != MSG_OK) { Serial.println("chMBPost failed");	while (1); }
+
+			playSingleNote(NOTE_A5, 40);
+		}
+		#define SPEAK(s) speakSerial(s)
+		#define SPEAK_CIAO				speakSerial("h"); 			
+		#define SPEAK_OIOI				speakSerial("O"); 			
+		#define SPEAK_CIAOCHISEI		speakSerial("ciao  ki sei"); 	
+		#define SPEAK_OK				speakSerial("k");				
+		#define SPEAK_TEST				speakSerial("t");				
+		#define SPEAK_MODE_SLAVE		speakSerial("SLEIV");			
+		#define SPEAK_AUTONOMO			speakSerial("AUTONOMO");		
 
 	#pragma endregion
+	//------------------------------------------------------------------------------
 
+	// BTH Send and receive buffers
+		String bluetooth_rx_buffer = "";
+		String bluetooth_tx_buffer = "";
+		#define	CMDDELIMITER ";"
 
 
 //	bool isNumeric(const char *ch);
@@ -596,16 +426,13 @@
 #pragma endregion
 
 
-// ///////////////////////////////////////////////////////////////////////////////
-//  METTE IN CODA LA STRINGA DA PRONUNCIARE  AL TASK SPEAK    ///////////////////////////////// 
-// ///////////////////////////////////////////////////////////////////////////////
-//uso: SPEAK("ei");	// output via processo FifoToSPEAK
-// ///////////////////////////////////////////////////////////////////////////////
-//  PROCESS VOICE COMMANDS      //////////////////////////////////////////////////
-// ///////////////////////////////////////////////////////////////////////////////
-// Interpreta il comando ricevuto ed invia a Robot il comando corrispondente
 
-	#pragma region PROCESS VOICE COMMANDS  
+
+	/// ///////////////////////////////////////////////////////////////////////////////
+	//  PROCESS VOICE COMMAND      //////////////////////////////////////////////////
+	/// ///////////////////////////////////////////////////////////////////////////////
+	// Interpreta il comando ricevuto ed invia a Robot il comando corrispondente
+	#pragma region PROCESS VOICE COMMAND 
 		#define VOICECOMMANDMAXLEN 40	//Massima lunghezza della stringa in ingresso contenente il comando
 		#define WORDCOMMANDMAXLEN 10			// massima lunghezza di ciascun comando
 		#define ATTENTIONCOMMAND ROBOT	//indice del comando vocale che attiva il robot
@@ -787,7 +614,7 @@
 			//String InputString = "";
 			int cmdValue = COMMANDVALUEINVALID;
 			int cmdId = 0;
-			dbg2("> processVoiceCommand riceve: ", voiceCommandCharArray);
+			dbg2("> pVC rx: ", voiceCommandCharArray);
 
 			while (sizeof(voiceCommandCharArray)>0 && !blEndVoiceCmdProcessing)
 			{
@@ -1013,465 +840,125 @@
 //------------------------------------------------------------------------------
 
 
-//////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-//                   /////////////////////////////////////////////////////////////
+/// ///////////////////////////////////////////////////////////////////////////////
+// ////////////////////////////////////////////////////////////////////////////////
+///                   /////////////////////////////////////////////////////////////
 // PROCESSI CHIBIOS  /////////////////////////////////////////////////////////////
-//                   /////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-
-
-//////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-// thread 1		- Esplora
-//////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-#pragma region ESPLORA
-				/*
-	static THD_WORKING_AREA(waThreadEsplora, 400);
-	static THD_FUNCTION(ThreadEsplora, arg) {
-		const int FWDIST = 10;
-		int alfa = 0;
-		int cmDone = 0; // percorso eseguito a valle di un comando moveCm o RotateDeg
-		int stuckCount = 0;
-
-		while (robotModel.status.operatingMode == AUTONOMOUS)
-		{
-
-			TOGGLEPIN(Pin_LED_TOP_B);
-			robotModel.status.parameters.sonarStartAngle = 0;
-			robotModel.status.parameters.sonarEndAngle = 180;
-			robotModel.status.parameters.sonarStepAngle = 30;
-			robotModel.status.parameters.sonarScanSweeps = 1;
-			robotModel.status.parameters.sonarMedianSamples = 2;
-			robotModel.status.parameters.sonarScanSpeed = 30; // map(analogRead(Pin_AnaPot1), 0, 1023, 10, 500);  //was = 30 ms di attesa tra due posizioni
-
-			robotModel.SonarScanBatch(&servoSonar, &Sonar);
-			alfa = 90 - robotModel.status.parameters.SonarMaxDistAngle;
-			SERIAL_MSG.print("Max dist @alfa:"); SERIAL_MSG.println(alfa);
-			dbg2("Max dist cm:", robotModel.status.parameters.sonarMaxDistance)
-				TOGGLEPIN(Pin_LED_TOP_B);
-
-			// invia i dati Sonar
-			OnkbSonarSendData(&cmdMMI);
-			TOGGLEPIN(Pin_LED_TOP_B);
-
-
-			robotModel.rotateDeg(alfa);
-			cmDone = robotModel.moveCm(robotModel.status.parameters.sonarMaxDistance);	// avanti
-			if (cmDone < (robotModel.status.parameters.sonarMaxDistance - 1))	//ostacolo ?
-			{
-				SERIAL_MSG.println("1,Obst!;");
-				robotModel.moveCm(-FWDIST);	// torna indietro
-				TOGGLEPIN(Pin_LED_TOP_B);
-				stuckCount++;
-				if (stuckCount>2)
-				{
-					robotModel.rotateDeg(180); //inverto la direzione
-					TOGGLEPIN(Pin_LED_TOP_B);
-					stuckCount = 0;
-				}
-			}
-			else //nessun ostacolo, azzero il contatore
-			{
-				stuckCount = 0;
-			}
-			TOGGLEPIN(Pin_LED_TOP_B);
-
-
-			chThdSleepMilliseconds(1500);	// Sleep for 150 milliseconds.
-
-		}
-		//  return 0;
-	}
-	*/
-
-#pragma endregion
-	//////////////////////////////////////////////////////////////////////////////////
-// COMMAND MANAGER ( COMANDI DA SERIALE O BLUETOOTH INTERFACE  )    ////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-
-/*
-formato comandi vocali: *comando#  Es.  *ROBOT AVANTI 20#
-formato comdMessenger:  [cmdId],[parametri];  o [cmd];
-
-
-*/ 
-#pragma region Processo: comandi
-
-static THD_WORKING_AREA(waComandiBT, 64);
-static THD_FUNCTION(thdComandiBT, arg) {
-	dbg("S")
-	// inizializza il buffer di caratteri
-	char chSerialBTRxBuffer[SERIAL_RX_BUFFER_SIZE];
-	for (size_t i = 0; i < SERIAL_RX_BUFFER_SIZE; i++) { chSerialBTRxBuffer[i] = 0; }
-	
- 	// Setup CommandMessenger -----------------------------------------------------
-	cmdBT.printLfCr();   // Adds newline to every command 
-	attachCommandCallbacks(&cmdBT);// Attach my application's user-defined callback methods
-
-	while (1) {
-
-		// LED BLUE.
-		tft.fillCircle(LCD_LED_SERIALCORE_POS_X+ LCD_LED_HALF_SIZE, LCD_LED_SERIALCORE_POS_Y, LCD_LED_HALF_SIZE, VGA_BLUE);
-
-
-		//dbg("B>");
-		//playSingleNote(NOTE_D8, 90);
-
-		while (SERIAL_BT.available())
-		{
-			playSingleNote(3000, 40);//bip acuto che segnala la ricezione di caratteri sulla seriale
-
-			// metto  il contenuto della seriale in ub Buffer
-			int bytesAvailable = min(SERIAL_BT.available(), SERIAL_RX_BUFFER_SIZE);
-			SERIAL_BT.readBytes(chSerialBTRxBuffer, bytesAvailable);
-
-			//ECHO su seriale verso PC (per test)
-			for (int byteNo = 0; byteNo < bytesAvailable; byteNo++)
-			{
-				SERIAL_BT.print(chSerialBTRxBuffer[byteNo]);
-				tft.print(chSerialBTRxBuffer, 0, 400);
-			}
-
-
-			// come cmdRobotCore.feedinSerialData() ma prende i dati da serialRxBuffer
-			cmdBT.feedinSerialDataFromBuffer(chSerialBTRxBuffer, bytesAvailable);;
-
-			cmdBT.feedinSerialData();
-		}
-
-		chThdSleepMilliseconds(1000);//	chThdYield();
-
-
-
-/*
-
-		// attendo il testo sulla seriale
-		while (!SERIAL_ROBOT.available()) { chThdSleepMilliseconds(50); }	// dbg(".") chThdYield();delay(50);dbg('.')
-
-		// get object from memory pool
-		PoolObject_t* p = (PoolObject_t*)chPoolAlloc(&memPool);
-		if (!p) { Serial.println("chPoolAlloc failed");	while (1); }
-
-
-		dbg("[")
-		#pragma region [Esegue il parsing dei caratteri in ingresso alla seriale]
-
-			//noInterrupts();
-			int i = 0; char c = '\0';
-			while (SERIAL_ROBOT.available() > 0 && i < INPUTCHARARRAYSIZE && c != '#')
-			{
-				// mette i dati nella FIFO------------------
-				char c = SERIAL_ROBOT.read();
-				//p->str[i] = c;
-				chSerialRxBuffer[i] = c;
-				dbg(chSerialRxBuffer[i])
-					switch (c)
-					{
-					case '*': break;//salto il primo carattere * e non incremento i
-					case '#': //ultimo carattere, lo sostituisco con fine stringa
-						//p->str[i] = '\0'; 
-						chSerialRxBuffer[i]='\0'; 
-						i++; 
-						break; // sostituisco con una pausa
-					default:
-						i++; 				
-						break;
-					}
-
-				//dbg(char(str[i])) messa qui fa casino
-			}
-			//p->size = i;
-
-		#pragma endregion
-		dbg("]")
-
-		// pulisce il resto del buffer
-		for (size_t j = i; j < INPUTCHARARRAYSIZE; j++) { chSerialRxBuffer[i] = '\0';} // p->str[i] = '\0'; 
-		interrupts();
-				
-		SPEAK(chSerialRxBuffer);// send message
-
-		msg_t s = chMBPost(&mailVoice, (msg_t)p, TIME_IMMEDIATE);
-		if (s != MSG_OK) { Serial.println("chMBPost failed");	while (1); }
-*/
-	}
-
-}
-#pragma endregion
-
-//////////////////////////////////////////////////////////////////////////////////
-//RICEVE DA BT E INTERPRETA I COMANDI VOCALI      ////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-#pragma region Processo: BtVoiceCommandInterpreter e comando riconosciuto su Voice FiFo
-// gestisce i comandi vocali
-// Monitora la SERIAL_SPEAK e mette quello che riceve in voiceCommandCharArray[]
-// poi elabora il comando
-static THD_WORKING_AREA(waBtCommands, 200);//was 64
-static THD_FUNCTION(thdBtCommands, arg) {
-	dbg("VC")
-//	int i = 0;
-
-	// inizializza il buffer d caratteri
-	for (int i = 0; i < VOICECOMMANDMAXLEN; i++) { voiceCommandCharArray[i] = 0; }
-
-	while (1) {
-
-		// attendo il testo sulla seriale
-		while (!SERIAL_BT.available()) {playSingleNote(1500, 40); chThdSleepMilliseconds(1500); }	// dbg(".") chThdYield();delay(50);dbg('.')
-
-
-		dbg("Something received on BT... ")
-		playSingleNote(NOTE_A1, 40);
-
-		#pragma region [Esegue il parsing dei caratteri in ingresso alla seriale]
-
-		//noInterrupts();
-		int i = 0; char c = '\0';
-		while (SERIAL_BT.available() > 0 && i < VOICECOMMANDMAXLEN && c != '#')
-		{
-			// legge il carattere dalla seriale
-			char c = SERIAL_BT.read();
-
-				// l'app Android invia * all'inizio e # alla fine del testo
-				switch (c)
-				{
-				case '*': break;//salto il primo carattere * e non incremento i
-				case '#': voiceCommandCharArray[i]  = '\0'; i++; break; // sostituisco con una pausa
-				default:	
-					voiceCommandCharArray[i] = toupper(c);
-					//if ((c >= 'a') && (c <= 'z'))
-					//	voiceCommandCharArray[i] =c + ( 'A' - 'a');
-					 
-					i++; 				
-					break;
-				}
-
-		}
-
-		#pragma endregion
-
-		// pulisce il resto del buffer
-		for (size_t j = i; j < VOICECOMMANDMAXLEN; j++) {	voiceCommandCharArray[i] = '\0' ;	}
-		
-		SPEAK(" e ");	//prova se funziona la voce
-
-		// elaboro il contenuto della stringa voiceCommandCharArray
-		processVoiceCommand();
-
-
-		chThdSleepMilliseconds(500);//	chThdYield();
-	}
-
-#pragma region cmdWiFi
-	/*
-	// da tenere allineata con robot.cs >  OnkbGetSensorsHighRate(ReceivedCommand arguments)
-	cmdWiFi.sendCmdStart(kbGetSensorsHRate);
-
-	cmdWiFi.sendCmdArg(robot.posCurrent.x);	//robot position X
-	cmdWiFi.sendCmdArg(robot.posCurrent.y);	//robot position y
-	cmdWiFi.sendCmdArg(robot.posCurrent.r);	//robot position alfa gradi
-
-	cmdWiFi.sendCmdArg(robot.status.irproxy.fw);	// IR proxy
-	cmdWiFi.sendCmdArg(robot.status.irproxy.fwHL);	// IR proxy
-	cmdWiFi.sendCmdArg(robot.status.irproxy.bk);	// IR proxy
-	cmdWiFi.sendCmdArg(robot.status.pirDome);		// movimento
-
-	cmdWiFi.sendCmdArg(robot.status.analog[0]);	//pot
-	cmdWiFi.sendCmdArg(robot.status.analog[1]);	//batteria
-	cmdWiFi.sendCmdArg(robot.status.analog[2]);	//light
-
-	cmdWiFi.sendCmdArg(robot.getReleStatus(0));		//rele 1
-	cmdWiFi.sendCmdArg(robot.getReleStatus(1));		//rel2
-
-	cmdWiFi.sendCmdArg(digitalReadFast(Pin_MotENR));	//status motori
-	cmdWiFi.sendCmdArg(digitalReadFast(Pin_MotENL));
-
-	cmdWiFi.sendCmdArg(robot.status.switchTop); // status switch modo Autonomo/slave
-	cmdWiFi.sendCmdArg(robot.status.laserOn); // laser
-	cmdWiFi.sendCmdArg(robot.readBattChargeLevel());
-
-
-	cmdWiFi.sendCmdArg(robot.status.gps.sats);		//gps
-	cmdWiFi.sendCmdArg(robot.status.gps.lat);
-	cmdWiFi.sendCmdArg(robot.status.gps.lng);
-
-
-
-	cmdWiFi.sendCmdEnd();
-	*/
-
-#pragma endregion
-
+///                   /////////////////////////////////////////////////////////////
+// ///////////////////////////////////////////////////////////////////////////////
+/// ///////////////////////////////////////////////////////////////////////////////
+
+	/// ///////////////////////////////////////////////////////////////////////////////
+	// ROBOT INTERFACE ( SERIAL MANAGER  )    ////////////////////////////////////////
+	/// ///////////////////////////////////////////////////////////////////////////////
+	// GESTISCE I MESSAGGI DA ARDUINO CORE CON I DATI DEI SENSORI
 	/*
 
-	// attendo il testo sulla seriale
-	while (!SERIAL_ROBOT.available()) { chThdSleepMilliseconds(50); }	// dbg(".") chThdYield();delay(50);dbg('.')
+	dati inviati da kbGetSensorsHRate
+	31,1,0.00,0.00,90,1,1,1,0,2,1,10,0,1,8,16,0,1,0,0,0.00,0.00;
+	31,1,0.00,0.00,90,1,1,1,0,2,1,10,0,1,8,16,0,1,0,0,1.11,2.22;
+	kbGetSensorsHRate
+	tictac
+	robotModel.status.posCurrent.x
+	robotModel.status.posCurrent.y
+	robotModel.status.posCurrent.z
+	(robotModel.status.sensors.irproxy.fw
+	robotModel.status.sensors.irproxy.fwHL
+	robotModel.status.sensors.irproxy.bk
+	robotModel.status.sensors.pirDome
+	robotModel.status.sensors.analog[0]		//pot
+	robotModel.status.sensors.analog[1]);	//batteria
+	robotModel.status.sensors.analog[2]);	//light
+	robotModel.getReleStatus(0)
+	robotModel.getReleStatus(1)
+	digitalReadFast(Pin_MotENR));	//status motori
+	digitalReadFast(Pin_MotENL))
+	robotModel.status.sensors.switchTop
+	robotModel.status.act.laserOn
+	robotModel.readBattChargeLevel() //0-100
+	robotModel.status.sensors.gps.sats
+	robotModel.status.sensors.gps.lat
+	robotModel.status.sensors.gps.lng
 
-	// get object from memory pool
-	PoolObject_t* p = (PoolObject_t*)chPoolAlloc(&memPool);
-	if (!p) { Serial.println("chPoolAlloc failed");	while (1); }
+	*/ 
+	#pragma region Processo: RobotCoreInterface
 
-
-	dbg("[")
-	#pragma region [Esegue il parsing dei caratteri in ingresso alla seriale]
-
-	//noInterrupts();
-	int i = 0; char c = '\0';
-	while (SERIAL_ROBOT.available() > 0 && i < INPUTCHARARRAYSIZE && c != '#')
-	{
-	// mette i dati nella FIFO------------------
-	char c = SERIAL_ROBOT.read();
-	//p->str[i] = c;
-	chSerialRxBuffer[i] = c;
-	dbg(chSerialRxBuffer[i])
-	switch (c)
-	{
-	case '*': break;//salto il primo carattere * e non incremento i
-	case '#': //ultimo carattere, lo sostituisco con fine stringa
-	//p->str[i] = '\0';
-	chSerialRxBuffer[i]='\0';
-	i++;
-	break; // sostituisco con una pausa
-	default:
-	i++;
-	break;
-	}
-
-	//dbg(char(str[i])) messa qui fa casino
-	}
-	//p->size = i;
-
-	#pragma endregion
-	dbg("]")
-
-	// pulisce il resto del buffer
-	for (size_t j = i; j < INPUTCHARARRAYSIZE; j++) { chSerialRxBuffer[i] = '\0';} // p->str[i] = '\0';
-	interrupts();
-
-	SPEAK(chSerialRxBuffer);// send message
-
-	msg_t s = chMBPost(&mailVoice, (msg_t)p, TIME_IMMEDIATE);
-	if (s != MSG_OK) { Serial.println("chMBPost failed");	while (1); }
-	*/
-
-}
-#pragma endregion
-
-//////////////////////////////////////////////////////////////////////////////////
-// SERIAL MANAGER ( ROBOT INTERFACE  )    ////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-// GESTISCE I MESSAGGI DA ARDUINO CORE CON I DATI DEI SENSORI
-/*
-
-dati inviati da kbGetSensorsHRate
-31,1,0.00,0.00,90,1,1,1,0,2,1,10,0,1,8,16,0,1,0,0,0.00,0.00;
-31,1,0.00,0.00,90,1,1,1,0,2,1,10,0,1,8,16,0,1,0,0,1.11,2.22;
-kbGetSensorsHRate
-tictac
-robotModel.status.posCurrent.x
-robotModel.status.posCurrent.y
-robotModel.status.posCurrent.z
-(robotModel.status.sensors.irproxy.fw
-robotModel.status.sensors.irproxy.fwHL
-robotModel.status.sensors.irproxy.bk
-robotModel.status.sensors.pirDome
-robotModel.status.sensors.analog[0]		//pot
-robotModel.status.sensors.analog[1]);	//batteria
-robotModel.status.sensors.analog[2]);	//light
-robotModel.getReleStatus(0)
-robotModel.getReleStatus(1)
-digitalReadFast(Pin_MotENR));	//status motori
-digitalReadFast(Pin_MotENL))
-robotModel.status.sensors.switchTop
-robotModel.status.act.laserOn
-robotModel.readBattChargeLevel() //0-100
-robotModel.status.sensors.gps.sats
-robotModel.status.sensors.gps.lat
-robotModel.status.sensors.gps.lng
-
-*/ 
-#pragma region Processo: RobotCoreInterface
-
-static THD_WORKING_AREA(waRobotCoreInterface, 64);
-static THD_FUNCTION(thdRobotCoreInterface, arg) {
-	dbg("c>")
-	// inizializza il buffer di caratteri
-	char chSerialRxBuffer[INPUTCHARARRAYSIZE];
-	for (size_t i = 0; i < INPUTCHARARRAYSIZE; i++) { chSerialRxBuffer[i] = 0; }
+	static THD_WORKING_AREA(waRobotCoreInterface, 64);
+	static THD_FUNCTION(thdRobotCoreInterface, arg) {
+		dbg("c>")
+		// inizializza il buffer di caratteri
+		char chSerialRxBuffer[INPUTCHARARRAYSIZE];
+		for (size_t i = 0; i < INPUTCHARARRAYSIZE; i++) { chSerialRxBuffer[i] = 0; }
 	
-	// Setup CommandMessenger -----------------------------------------------------
-	cmdRobotCore.printLfCr();   // Adds newline to every command 
-	attachCommandCallbacks(&cmdRobotCore);// Attach my application's user-defined callback methods
+		// Setup CommandMessenger -----------------------------------------------------
+		cmdRobotCore.printLfCr();   // Adds newline to every command 
+		attachCommandCallbacks(&cmdRobotCore);// Attach my application's user-defined callback methods
 
-	while (1) {
-
-		// LED ROSSO.
-		tft.fillCircle(LCD_LED_SERIALCORE_POS_X, LCD_LED_SERIALCORE_POS_Y, LCD_LED_HALF_SIZE, VGA_RED);
-
-		//robotModel.status.sensors.bumper.center = !robotModel.status.sensors.bumper.center;
-		//robotModel.status.sensors.analog[0] = random(0, 1023);
-		//robotModel.status.sensors.analog[1] = random(0, 1023);
-		//dbg("c>");
-		//playSingleNote(NOTE_D8, 90);
-
-
-
-		while (SERIAL_ROBOT.available())
-		{
-			playSingleNote(NOTE_A7, 40);//bip acuto che segnala la ricezione di caratteri sulla seriale
-			cmdRobotCore.feedinSerialData();
-		}
-
-
-		chThdSleepMilliseconds(1000);//	chThdYield();
-	}
-
-}
-#pragma endregion
-
-
-
-//////////////////////////////////////////////////////////////////////////////////
-//  THREAD  R O T A R Y  E N C O D E R       ///////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-#pragma region  Processo GESTIONE ROTARY ENCODER  
-	static THD_WORKING_AREA(waRotaryEncoder, 164);
-	static THD_FUNCTION(RotaryEncoder, arg) {
 		while (1) {
-			mainMenu.poll(myMenu, in);
 
-			/*
-			loadEncoderPositionOnChange();
-			if (encoderPositionUpdated()) {
-				if (encoder_delta>0)
-				{
-					playSingleNote(NOTE_A5, 40);
-				}
-				else
-				{
-					playSingleNote(NOTE_C4, 40);
-				}
-				//printEncoderInfo();
-				robotModel.status.sensors.analog[Pin_AnaPot1 - Pin_AnaBase]= current_encoder_position;
-			}
-			if (!digitalRead(Pin_ROT_ENCODER_SWITCH))//è a logica negata!
+			// LED ROSSO.
+			tft.fillCircle(LCD_LED_SERIALCORE_POS_X, LCD_LED_SERIALCORE_POS_Y, LCD_LED_HALF_SIZE, VGA_RED);
+
+			//robotModel.status.sensors.bumper.center = !robotModel.status.sensors.bumper.center;
+			//robotModel.status.sensors.analog[0] = random(0, 1023);
+			//robotModel.status.sensors.analog[1] = random(0, 1023);
+			//dbg("c>");
+			//playSingleNote(NOTE_D8, 90);
+
+
+
+			while (SERIAL_ROBOT.available())
 			{
-				playSingleNote(100, 40);
-				current_encoder_position = 0;
-				robotModel.status.sensors.analog[Pin_AnaPot1 - Pin_AnaBase] = current_encoder_position;
+				playSingleNote(NOTE_A7, 40);//bip acuto che segnala la ricezione di caratteri sulla seriale
+				cmdRobotCore.feedinSerialData();
 			}
-			//digitalWrite(PIN_LED, 1);
-			//chThdSleepMilliseconds(200 + current_encoder_position);
-			//digitalWrite(PIN_LED, 0);// Turn LED on.
-			//chThdSleepMilliseconds(200 + current_encoder_position);
-			*/
-			chThdSleepMilliseconds(300);//	chThdYield();//	
+
+
+			chThdSleepMilliseconds(1000);//	chThdYield();
 		}
+
 	}
-#pragma endregion 
+	#pragma endregion
+
+
+
+	/// ///////////////////////////////////////////////////////////////////////////////
+	//  THREAD  R O T A R Y  E N C O D E R       ///////////////////////////////////////////////////////////
+	/// ///////////////////////////////////////////////////////////////////////////////
+	#pragma region  Processo GESTIONE MENU CON ROTARY ENCODER  
+		static THD_WORKING_AREA(waRotaryEncoder, 164);
+		static THD_FUNCTION(RotaryEncoder, arg) {
+			while (1) {
+				mainMenu.poll(myMenu, in);
+				/*
+				loadEncoderPositionOnChange();
+				if (encoderPositionUpdated()) {
+					if (encoder_delta>0)
+					{
+						playSingleNote(NOTE_A5, 40);
+					}
+					else
+					{
+						playSingleNote(NOTE_C4, 40);
+					}
+					//printEncoderInfo();
+					robotModel.status.sensors.analog[Pin_AnaPot1 - Pin_AnaBase]= current_encoder_position;
+				}
+				if (!digitalRead(Pin_ROT_ENCODER_SWITCH))//è a logica negata!
+				{
+					playSingleNote(100, 40);
+					current_encoder_position = 0;
+					robotModel.status.sensors.analog[Pin_AnaPot1 - Pin_AnaBase] = current_encoder_position;
+				}
+				//digitalWrite(PIN_LED, 1);
+				//chThdSleepMilliseconds(200 + current_encoder_position);
+				//digitalWrite(PIN_LED, 0);// Turn LED on.
+				//chThdSleepMilliseconds(200 + current_encoder_position);
+				*/
+				chThdSleepMilliseconds(300);//	chThdYield();//	
+			}
+		}
+	#pragma endregion 
 
 	//////////////////////////////////////////////////////////////////////////////////
 	//  THREAD  B R A I N      ///////////////////////////////////////////////////////////
@@ -1479,7 +966,103 @@ static THD_FUNCTION(thdRobotCoreInterface, arg) {
 	#pragma region  Processo	B R A I N    
 		static THD_WORKING_AREA(waBrain, 100);
 		static THD_FUNCTION(thdBrain, arg) {
+			const int FWDIST = 10; //distanza avanzamento
+			int alfa = 0;
+			int cmDone = 0; // percorso eseguito a valle di un comando moveCm o RotateDeg
+			int stuckCount = 0;
+
 			while (1) {
+				#pragma region HUMAN DETECTION
+				//-------------------------------------------------------------------
+				// chiedo chi sei solo se è attivo il pir da meno di un secondo
+				if ((robotModel.statusOld.sensors.pirDome != robotModel.status.sensors.pirDome)
+					&& (robotModel.status.ts - robotModel.statusOld.ts > 1000))
+				{
+					SPEAK_CIAOCHISEI
+						//resettto lo stato
+						robotModel.statusOld.sensors.pirDome = false;
+				}
+				#pragma endregion
+
+				#pragma region Gestione cambio modalità
+				// Gestione cambio modalità-----------------------------------------
+				// Switch TOP commutato da oltre un secondo?
+				if ((robotModel.status.sensors.switchTop != robotModel.statusOld.sensors.switchTop)
+					&& (robotModel.status.ts - robotModel.statusOld.ts > 1000)) {
+					if (robotModel.status.sensors.switchTop)	//AUTONOMO?
+					{
+
+
+						SPEAK(" okei okei esploro");
+					}
+					else // MODE_SLAVE
+					{
+
+						SPEAK(" okei comanda");
+					}
+				}
+				#pragma endregion
+				//////////////////////////////////////////////////////////////////////////////////
+				//////////////////////////////////////////////////////////////////////////////////
+				//  Esplora
+				//////////////////////////////////////////////////////////////////////////////////
+				//////////////////////////////////////////////////////////////////////////////////
+				#pragma region ESPLORA
+					/*
+
+
+					while (robotModel.status.operatingMode == AUTONOMOUS)
+					{
+
+					TOGGLEPIN(Pin_LED_TOP_B);
+					robotModel.status.parameters.sonarStartAngle = 0;
+					robotModel.status.parameters.sonarEndAngle = 180;
+					robotModel.status.parameters.sonarStepAngle = 30;
+					robotModel.status.parameters.sonarScanSweeps = 1;
+					robotModel.status.parameters.sonarMedianSamples = 2;
+					robotModel.status.parameters.sonarScanSpeed = 30; // map(analogRead(Pin_AnaPot1), 0, 1023, 10, 500);  //was = 30 ms di attesa tra due posizioni
+
+					robotModel.SonarScanBatch(&servoSonar, &Sonar);
+					alfa = 90 - robotModel.status.parameters.SonarMaxDistAngle;
+					SERIAL_MSG.print("Max dist @alfa:"); SERIAL_MSG.println(alfa);
+					dbg2("Max dist cm:", robotModel.status.parameters.sonarMaxDistance)
+					TOGGLEPIN(Pin_LED_TOP_B);
+
+					// invia i dati Sonar
+					OnkbSonarSendData(&cmdMMI);
+					TOGGLEPIN(Pin_LED_TOP_B);
+
+
+					robotModel.rotateDeg(alfa);
+					cmDone = robotModel.moveCm(robotModel.status.parameters.sonarMaxDistance);	// avanti
+					if (cmDone < (robotModel.status.parameters.sonarMaxDistance - 1))	//ostacolo ?
+					{
+					SERIAL_MSG.println("1,Obst!;");
+					robotModel.moveCm(-FWDIST);	// torna indietro
+					TOGGLEPIN(Pin_LED_TOP_B);
+					stuckCount++;
+					if (stuckCount>2)
+					{
+					robotModel.rotateDeg(180); //inverto la direzione
+					TOGGLEPIN(Pin_LED_TOP_B);
+					stuckCount = 0;
+					}
+					}
+					else //nessun ostacolo, azzero il contatore
+					{
+					stuckCount = 0;
+					}
+					TOGGLEPIN(Pin_LED_TOP_B);
+
+
+					chThdSleepMilliseconds(1500);	// Sleep for 150 milliseconds.
+
+					}
+					//  return 0;
+					}
+					*/
+
+				#pragma endregion
 
 
  				chThdSleepMilliseconds(500);//	chThdYield();//	
@@ -1487,218 +1070,573 @@ static THD_FUNCTION(thdRobotCoreInterface, arg) {
 			}
 		}
 	#pragma endregion 
-	//////////////////////////////////////////////////////////////////////////////////
-	//  THREAD  S P E E C H		//////////////////////////////////////////////////////
-	//////////////////////////////////////////////////////////////////////////////////
-	#pragma region  Processo	 S P E E C H 
-		// invia parole alla seriale del modulo Speech in base ai flag impostati o allo stato di RobotModel
-		static THD_WORKING_AREA(waSpeech, 100);
-		static THD_FUNCTION(thdSpeech, arg) {
-			SPEAK(" VOCE okei ");	//prova se funziona la voce
+
+ 	/// ///////////////////////////////////////////////////////////////////////////////
+	// THREAD FiFo ->  Speech     ///////////////////////////////////////////////////////////
+	/// ///////////////////////////////////////////////////////////////////////////////
+	#pragma region Processo: FiFo -> Speech
+ 	// in: mbox 
+	//out: invia la stringa  alla seriale del modulo voce
+	// usare SPEAK(s) per alimentare la fifo
+	/*
+	A pool is just a linked list of blocks with equal size. This list acts like a stack, chPoolFree()=PUSH, chPoolAlloc()=POP.
+
+	chPoolFree() <- INSERTS a block in a memory pool, so it is also used to fill a pool.
+	chPoolAlloc() <- REMOVES a block from a pool.
+
+	The use requires the following steps:
+
+	1) Creating a pool: chPoolInit() or MEMORYPOOL_DECL() if a static initialization is preferred. The test suite uses both for testing purposes, it is not required.
+	2) Preloading a pool with blocks: chPoolFree(). This can be skipped if a memory provider has been defined, in that case the pool will ask the provider for blocks when needed. chCoreAllocI() is usually used as provider.
+	3) Getting a block from a pool: chPoolAlloc(). The block size is intrinsically the size defined for the pool.
+	4) Returning a block to a pool: chPoolFree(). The pool assumes that the block is of the correct size.
+
+	WAs are not related to pools, that code simply uses the existing WAs as blocks for the pool in order to not waste memory, the test suite barely fits in the lesser 8bits micros so it is written to not waste RAM.
+
+	The advantage of pools is the very high speed when freeing and allocating blocks and the constant time execution (the time of the optional memory provided should be added).
+	*/
+
+		static THD_WORKING_AREA(waFifoToSpeech, 64);
+		static THD_FUNCTION(thdFifoToSpeech, arg) {
+  
+			SwSerialSpeech.begin(9600);
+			SwSerialSpeech.print("voce okei");
+
+  
+
+			PoolObject_t *pVoice; //pointer al msg nella fifo
 
 			while (1) {
-				SPEAK("A");
 
-				#pragma region HUMAN DETECTION
-					//-------------------------------------------------------------------
-					// chiedo chi sei solo se è attivo il pir da meno di un secondo
-					if ((robotModel.statusOld.sensors.pirDome != robotModel.status.sensors.pirDome)
-						&& (robotModel.status.ts - robotModel.statusOld.ts > 1000))
-					{
-						SPEAK_CIAOCHISEI
-							//resettto lo stato
-							robotModel.statusOld.sensors.pirDome = false;
-					}
-				#pragma endregion
+				// attende l'arrivo di un messaggio
+				chMBFetch(&mailVoice, (msg_t*)&pVoice, TIME_INFINITE);  // il cast di pVoice deve essere sempre di tipo msg_t
+				// bip
+				playSingleNote(600, 40);
 
-				#pragma region Gestione cambio modalità
-					// Gestione cambio modalità-----------------------------------------
-					// Switch TOP commutato da oltre un secondo?
-					if ((robotModel.status.sensors.switchTop != robotModel.statusOld.sensors.switchTop)
-						&& (robotModel.status.ts - robotModel.statusOld.ts > 1000)) {
-						if (robotModel.status.sensors.switchTop)	//AUTONOMO?
-						{
+				//dbg2("thdFifoToSpeech get:",pVoice->strSpeech)
+ 
+				// attende che non sia busy
+				while (digitalRead(Pin_SpeechSerialBusy) == 1) { chThdSleepMilliseconds(20); }		//mi assicuro che la stringa venga inviata interamente
+				
+				//disabilita gli interrupt per garantire che l'intera stringa venga inviata
+				osalSysDisable();
+				//invia la stringa sulla seriale
+				SwSerialSpeech.print(pVoice->strSpeech);
+				osalSysEnable();
 
+ 
+				// libera la memoria
+				chPoolFree(&memPoolVoice, pVoice);
+				mailBoxVoiceFreeCounter++;
+				dbg2("Free mbox+: ", mailBoxVoiceFreeCounter);
 
-							SPEAK(" okei okei esploro");
-						}
-						else // SLAVE
-						{
-
-							SPEAK(" okei comanda");
-						}
-					}
-				#pragma endregion
-
-				chThdSleepMilliseconds(1500);//	chThdYield();//	
-
+				chThdSleepMilliseconds(200);//	chThdYield();//	
 			}
 		}
+
+ 
+
+
 	#pragma endregion 
 
-//////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-//  THREAD  T F T  M O N I T O R									/////////////
-/////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-// Input: RobotStatus
-// Output: TFT
-#pragma region Processo di gestione T F T   M O N I T O R
-	#define SONAR_RANGE_SIZE 50 // raggio in pixel della rappresentazione dei valori sonar
-	static THD_WORKING_AREA(waThreadTFT, 100);
-	static THD_FUNCTION(thdTFT, arg) {
-		bool HbLed = 0; //stato del led che visualizza l'ttivit� di questo Thread
-		byte r = 1;
-/* spostato in tftCaptions
-	//char* tftMsg; //= "XYZ";
-	String	sTFT; //stringa di appoggio usata dalla macro TFTprintAtStr
-	// Caption fisse
-	uint8_t r = 1;
-	drawLedRect(TFTDATACOL, TFTROW(7),1);
-	bool HbLed = 0; //stato del led che visualizza l'ttivit� di questo Thread
-	tft.setColor(VGA_WHITE);
+ 	/// ///////////////////////////////////////////////////////////////////////////////
+	//  THREAD  T F T  M O N I T O R									/////////////
+	/// //////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////
+	// Input: RobotStatus
+	// Output: TFT
+	#pragma region Processo di gestione T F T   M O N I T O R
+		#define SONAR_RANGE_SIZE 50 // raggio in pixel della rappresentazione dei valori sonar
+		static THD_WORKING_AREA(waThreadTFT, 100);
+		static THD_FUNCTION(thdTFT, arg) {
+			bool HbLed = 0; //stato del led che visualizza l'ttivit� di questo Thread
+			byte r = TFTCAPTION_STARTINGROW;
+			char *strTmp;
 
-	TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Op Mode:");
-	TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Free Ram:");
+			tft.clrScr();
+			tftPrintCaptions();
 
-	TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "LT,LNG,Sat:");
-	TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Pot:");
-	TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Vbat:");
-	TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Light:");
-	TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Motion det:");
-	TFTprintAtStr(TFTCAPTIONCOL, TFTROW(r++), "Command:");
-*/
+			//drawButtons();
+			while (true)// loop di visualizzazione dati
+			{
+				// imposta i colori di default
+				tft.setBackColor(VGA_BLACK);
+				tft.setColor(VGA_WHITE);
 
-	tftCaptions();
-	//	chThdSleepMilliseconds(1);//	chThdYield();//	
+				//cancella  la barra di stato superiore 
+				TFT_CLEAR_STATUSBAR
 
-	//drawButtons();
-	while (true)// loop di visualizzazione dati
-	{
-		// RESETTA I LED DEI PROCESSI ATTIVI
-		tft.setXY(0,0, tft.disp_x_size, 20);
-		//tft.fillCircle(LCD_LED_SPEAK_POS_X, LCD_LED_SPEAK_POS_Y, LCD_LED_HALF_SIZE, VGA_BLACK);
-		//tft.fillCircle(LCD_LED_SERIALCORE_POS_X, LCD_LED_SERIALCORE_POS_Y, LCD_LED_HALF_SIZE, VGA_BLACK);
-		//tft.fillCircle(LCD_LED_SERIALCORE_POS_X+50, LCD_LED_SPEAK_POS_Y, LCD_LED_HALF_SIZE, VGA_BLACK);
+				// RESETTA I LED DEI PROCESSI ATTIVI
+				//tft.fillCircle(LCD_LED_SPEAK_POS_X, LCD_LED_SPEAK_POS_Y, LCD_LED_HALF_SIZE, VGA_BLACK);
+				//tft.fillCircle(LCD_LED_SERIALCORE_POS_X, LCD_LED_SERIALCORE_POS_Y, LCD_LED_HALF_SIZE, VGA_BLACK);
+				//tft.fillCircle(LCD_LED_SERIALCORE_POS_X+50, LCD_LED_SPEAK_POS_Y, LCD_LED_HALF_SIZE, VGA_BLACK);
 
-		//Serial.print(chUnusedStack(waThreadTFT, sizeof(waThreadTFT)));
-		HbLed = !HbLed;	//Heartbeat Led
-		drawLedRect(TFTDATACOL, 10, robotModel.status.tictac, VGA_LIME);
+				//commuta il led
+				HbLed = !HbLed;	//Heartbeat Led
+				drawLedRect(TFTDATACOL, 10, robotModel.status.tictac, VGA_LIME);
+ 
+				//cancella  l'area dati
+				TFT_CLEAR_DATA
+				/// Visualizza la modalità operativa --------------------------------------------------
+			#if 1
+				switch (robotModel.status.operatingMode)
+				{
+				case operatingMode_e::MODE_SLAVE:
+					tft.setColor(VGA_RED);
+					strTmp = "S L A V E ";
+					break;
+				case operatingMode_e::MODE_AUTONOMOUS:
+					tft.setColor(VGA_BLUE);
+					strTmp = "AUTONOMOUS";
+					break;
+				default:
+					strTmp = "MODE ??????";
+					tft.setColor(VGA_WHITE);
+					break;
+				}
+			#else
+				tft.setColor(VGA_RED);
+				strTmp = robotModel.getOperatingModeChar();
 
-		
+			#endif // 0
+			TFTprintAtStr(0, TFTROW(0), strTmp);
+			//tft.print(strTmp, 0, 0);
+ 
+			//TFTprintAtStr(0, TFTROW(0), robotModel.getOperatingModeChar());
  
 
- 
+#if 1
+				tft.setColor(VGA_WHITE);
+				tft.setBackColor(0, 0, 0);
+				r = TFTCAPTION_STARTINGROW;
+				/// Visualizza la memoria libera---------------------------------------------------
+				TFTprintAtNumI(TFTDATACOL, TFTROW(r++), getFreeSram(), VGA_GRAY);
 
- 
-		//cancella  l'area dati
-		tft.setXY(TFTDATACOL, 21, tft.disp_x_size, tft.disp_y_size);
-		r = 1;
-
-
-
-		/// Visualizza la memoria libera---------------------------------------------------
-		//tft.setColor(VGA_GRAY);
-		TFTprintAtNumI(TFTDATACOL, TFTROW(r++), getFreeSram(),VGA_GRAY);
-
-		/// Visualizza dati GPS---------------------------------------------------
-		TFTprintAtNumF(TFTDATACOL, TFTROW(r), robotModel.status.sensors.gps.lat,8, VGA_BLUE);
-		TFTprintAtNumF(TFTDATACOL+100, TFTROW(r), robotModel.status.sensors.gps.lng, 8, VGA_BLUE);
-		TFTprintAtNumI(TFTDATACOL+200, TFTROW(r++), robotModel.status.sensors.gps.sats, VGA_BLUE);
-
-
- 		
-		// Ingressi Analogici ----------------------------------------------------
- 		
-		TFTprintAtNumI(TFTDATACOL, TFTROW(r), robotModel.status.sensors.analog[0], VGA_GREEN);
-		drawGauge(TFTDATACOL+30, TFTROW(r++), robotModel.status.sensors.analog[0], VGA_GREEN);
-		
-		TFTprintAtNumI(TFTDATACOL, TFTROW(r), robotModel.status.sensors.analog[1], VGA_LIME);
-		drawGauge(TFTDATACOL+30, TFTROW(r++), robotModel.status.sensors.analog[1], VGA_LIME);
-		
-		TFTprintAtNumI(TFTDATACOL, TFTROW(r), robotModel.status.sensors.analog[2], VGA_YELLOW);
-		drawGauge(TFTDATACOL+30, TFTROW(r++), robotModel.status.sensors.analog[2], VGA_YELLOW);
-		
- 		drawLedRect(TFTDATACOL+30, TFTROW(r++), robotModel.status.sensors.pirDome, VGA_RED);
-		
-		
-		
-		/// Visualizza la modalità operativa --------------------------------------------------
-		tft.setColor(VGA_RED);
+				/// Visualizza dati GPS---------------------------------------------------
+				TFTprintAtNumF(TFTDATACOL, TFTROW(r), robotModel.status.sensors.gps.lat, 8, VGA_BLUE);
+				TFTprintAtNumF(TFTDATACOL + 100, TFTROW(r), robotModel.status.sensors.gps.lng, 8, VGA_BLUE);
+				TFTprintAtNumI(TFTDATACOL + 200, TFTROW(r++), robotModel.status.sensors.gps.sats, VGA_BLUE);
 
 
 
-		if (robotModel.status.operatingMode == 1)
-		{
-			TFTprintAtStr(TFTDATACOL, TFTROW(r++), "S L A V E ");
+				// Ingressi Analogici ----------------------------------------------------
 
-		}
-		else
-		{
-			TFTprintAtStr(TFTDATACOL, TFTROW(r++), "AUTONOMOUS");
+				TFTprintAtNumI(TFTDATACOL, TFTROW(r), robotModel.status.sensors.analog[0], VGA_GREEN);
+				drawGauge(TFTDATACOL + 30, TFTROW(r++), robotModel.status.sensors.analog[0], VGA_GREEN);
 
-		}
+				TFTprintAtNumI(TFTDATACOL, TFTROW(r), robotModel.status.sensors.analog[1], VGA_LIME);
+				drawGauge(TFTDATACOL + 30, TFTROW(r++), robotModel.status.sensors.analog[1], VGA_LIME);
 
+				TFTprintAtNumI(TFTDATACOL, TFTROW(r), robotModel.status.sensors.analog[2], VGA_YELLOW);
+				drawGauge(TFTDATACOL + 30, TFTROW(r++), robotModel.status.sensors.analog[2], VGA_YELLOW);
 
+				drawLedRect(TFTDATACOL + 30, TFTROW(r++), robotModel.status.sensors.pirDome, VGA_RED);
 
-		//tftMsg =robotModel.getOperatingModeChar();
-		//TFTprintAtStr( TFTDATACOL, TFTROW(r++), tftMsg);
-		//TFTprintAtStr( TFTDATACOL, TFTROW(r++), tftMsg);
-
-		// Visualizza l'ultimo comando via seriale ---------------------------------------------------
-		tft.setColor(VGA_WHITE);
-
-		
-#pragma region Buffer circolare
-#if 0
-		//TFTprintAtStr(TFTDATACOL, TFTROW(r++), *serialRxBuffer);
-		while ((rxBuf.remain() > 0) && (TFTROW(r) < (TFT_Y_HEIGHT - TFT_ROWSPACING)))
-		{
-			sTFT = rxBuf.pop();
-			TFTprintAtStr(TFTDATACOL, TFTROW(r++), sTFT);
-		}
 
 #endif // 0
 
-#pragma endregion
+		
+ 
+ 
 
-#pragma region Mappa Radar
-#if 0
-		// Visualizza la mappa radar ------------------
-		r++;
-		tft.setColor(VGA_BLUE);
-		uint16_t x = 0;
-		uint16_t y = 0;
-		for (int i = 0; i < 360; i++)
-		{
 
-			drawEchoPolar(maxRangePixel + 5, TFTROW(r) + maxRangePixel, (double)i, analogRead(1), VGA_GREEN);
-		}
-		//---------------------------------------------
 
-#endif // 0
+				#pragma region Buffer circolare
+				#if 0
+						// Visualizza l'ultimo comando via seriale ---------------------------------------------------
+						tft.setColor(VGA_WHITE);
+						//TFTprintAtStr(TFTDATACOL, TFTROW(r++), *serialRxBuffer);
+						while ((rxBuf.remain() > 0) && (TFTROW(r) < (TFT_Y_HEIGHT - TFT_ROWSPACING)))
+						{
+							sTFT = rxBuf.pop();
+							TFTprintAtStr(TFTDATACOL, TFTROW(r++), sTFT);
+						}
 
-#pragma endregion
+				#endif // 0
+
+				#pragma endregion
+
+				#pragma region Mappa Radar
+				#if 0
+						// Visualizza la mappa radar ------------------
+						r++;
+						tft.setColor(VGA_BLUE);
+						uint16_t x = 0;
+						uint16_t y = 0;
+						for (int i = 0; i < 360; i++)
+						{
+
+							drawEchoPolar(maxRangePixel + 5, TFTROW(r) + maxRangePixel, (double)i, analogRead(1), VGA_GREEN);
+						}
+						//---------------------------------------------
+
+				#endif // 0
+
+				#pragma endregion
 
 		
-			
-		chThdSleepMilliseconds(1000);//chThdYield();
+			chThdSleepMilliseconds(1000);//chThdYield();
+				
+			}
+
 	}
 
-}
-
-#pragma endregion 
+	#pragma endregion 
 
 // FINE PROCESSI CHIBIOS ////////////////////////////////////////////////////////////////////////////////
 
 
-//////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
+// ////////////////////////////////////////////////////////////////////////////////
+/// ///////////////////////////////////////////////////////////////////////////////
 //  THREAD  N O N  A T T I V I  									/////////////
-/////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
+/// //////////////////////////////////////////////////////////////////////////////
+// ////////////////////////////////////////////////////////////////////////////////
 #pragma region THREAD NON ATTIVI
 	#if 0
+
+/// ///////////////////////////////////////////////////////////////////////////////
+// COMMAND MANAGER ( COMANDI DA SERIALE O BLUETOOTH INTERFACE  )    ////////////////////////////////////////
+/// ///////////////////////////////////////////////////////////////////////////////
+/*
+formato comandi vocali: *comando#  Es.  *ROBOT AVANTI 20#
+formato comdMessenger:  [cmdId],[parametri];  o [cmd];
+*/
+#pragma region Processo: thdComandiVocali
+
+	static THD_WORKING_AREA(waComandiVocali, 64);
+	static THD_FUNCTION(thdComandiVocali, arg) {
+		dbg("S")
+			// inizializza il buffer di caratteri
+			char chSerialBTRxBuffer[SERIAL_RX_BUFFER_SIZE];
+		for (byte i = 0; i < SERIAL_RX_BUFFER_SIZE; i++) { chSerialBTRxBuffer[i] = 0; }
+
+		// Setup CommandMessenger -----------------------------------------------------
+		cmdBT.printLfCr();   // Adds newline to every command 
+		attachCommandCallbacks(&cmdBT);// Attach my application's user-defined callback methods
+
+		while (1) {
+
+			// LED SU TFT: BLUE.
+			tft.fillCircle(LCD_LED_SERIALCORE_POS_X + LCD_LED_HALF_SIZE, LCD_LED_SERIALCORE_POS_Y, LCD_LED_HALF_SIZE, VGA_BLUE);
+
+
+			//dbg("B>");
+			//playSingleNote(NOTE_D8, 90);
+
+			while (SERIAL_BT.available())
+			{
+				//segnala la ricezione di caratteri sulla seriale con bip acuto
+				playSingleNote(3000, 40);
+
+				// metto  il contenuto della seriale in un Buffer
+				int bytesAvailable = min(SERIAL_BT.available(), SERIAL_RX_BUFFER_SIZE);
+				SERIAL_BT.readBytes(chSerialBTRxBuffer, bytesAvailable);
+
+				//ECHO su seriale verso PC (per test)
+				for (int byteNo = 0; byteNo < bytesAvailable; byteNo++)
+				{
+					SERIAL_BT.print(chSerialBTRxBuffer[byteNo]);
+					tft.print(chSerialBTRxBuffer, 0, 400);
+				}
+
+
+				// come cmdRobotCore.feedinSerialData() ma prende i dati da serialRxBuffer
+				cmdBT.feedinSerialDataFromBuffer(chSerialBTRxBuffer, bytesAvailable);;
+
+				cmdBT.feedinSerialData();
+			}
+
+			chThdSleepMilliseconds(1000);//	chThdYield();
+
+
+
+										 /*
+
+										 // attendo il testo sulla seriale
+										 while (!SERIAL_ROBOT.available()) { chThdSleepMilliseconds(50); }	// dbg(".") chThdYield();delay(50);dbg('.')
+
+										 // get object from memory pool
+										 msgObjVoice_t* p = (msgObjVoice_t*)chPoolAlloc(&memPoolSpeech);
+										 if (!p) { Serial.println("chPoolAlloc failed");	while (1); }
+
+
+										 dbg("[")
+										 #pragma region [Esegue il parsing dei caratteri in ingresso alla seriale]
+
+										 //noInterrupts();
+										 int i = 0; char c = '\0';
+										 while (SERIAL_ROBOT.available() > 0 && i < INPUTCHARARRAYSIZE && c != '#')
+										 {
+										 // mette i dati nella FIFO------------------
+										 char c = SERIAL_ROBOT.read();
+										 //p->str[i] = c;
+										 chSerialRxBuffer[i] = c;
+										 dbg(chSerialRxBuffer[i])
+										 switch (c)
+										 {
+										 case '*': break;//salto il primo carattere * e non incremento i
+										 case '#': //ultimo carattere, lo sostituisco con fine stringa
+										 //p->str[i] = '\0';
+										 chSerialRxBuffer[i]='\0';
+										 i++;
+										 break; // sostituisco con una pausa
+										 default:
+										 i++;
+										 break;
+										 }
+
+										 //dbg(char(str[i])) messa qui fa casino
+										 }
+										 //p->size = i;
+
+										 #pragma endregion
+										 dbg("]")
+
+										 // pulisce il resto del buffer
+										 for (size_t j = i; j < INPUTCHARARRAYSIZE; j++) { chSerialRxBuffer[i] = '\0';} // p->str[i] = '\0';
+										 interrupts();
+
+										 SPEAK(chSerialRxBuffer);// send message
+
+										 msg_t s = chMBPost(&mboxVoice, (msg_t)p, TIME_IMMEDIATE);
+										 if (s != MSG_OK) { Serial.println("chMBPost failed");	while (1); }
+										 */
+		}
+
+	}
+#pragma endregion
+
+	/// ///////////////////////////////////////////////////////////////////////////////
+	// RICEVE DA BT E INTERPRETA I COMANDI VOCALI      ////////////////////////////////
+	/// ///////////////////////////////////////////////////////////////////////////////
+	/**
+	* Called when a complete message is received.
+	*/
+	void gotMessage(String message) {
+
+		Serial.println("[RECV] " + message);
+
+		// Do something!
+	}
+
+	/**
+	* Finds complete messages from the rx buffer.
+	*/
+	void parseReadBuffer() {
+
+		// Find the first delimiter in the buffer
+		int inx = bluetooth_rx_buffer.indexOf(CMDDELIMITER);
+
+		// If there is none, exit
+		if (inx == -1) return;
+
+		// Get the complete message, minus the delimiter
+		String s = bluetooth_rx_buffer.substring(0, inx);
+
+		// Remove the message from the buffer
+		bluetooth_rx_buffer = bluetooth_rx_buffer.substring(inx + 1);
+
+		// Process the message
+		gotMessage(s);
+
+		// Look for more complete messages
+		parseReadBuffer();
+	}
+
+	void parseWriteBuffer() {
+
+		// Find the first delimiter in the buffer
+		int inx = bluetooth_tx_buffer.indexOf(CMDDELIMITER);
+
+		// If there is none, exit
+		if (inx == -1) return;
+
+		// Get the complete message, including the delimiter
+		String message = bluetooth_tx_buffer.substring(0, inx + 1);
+
+		// Remove the message from the buffer
+		bluetooth_tx_buffer = bluetooth_tx_buffer.substring(inx + 1);
+
+		// Send off the message
+		SERIAL_BT.print(message);
+		//msg("[SENT] " , message);
+
+		// Look for more
+		parseWriteBuffer();
+	}
+#pragma region Processo: BtVoiceCommandInterpreter e comando riconosciuto su Voice FiFo
+	// gestisce i comandi vocali
+	// Monitora la SERIAL_SPEAK e mette quello che riceve in voiceCommandCharArray[]
+	// poi elabora il comando
+	static THD_WORKING_AREA(waBtCommands, 200);//was 64
+	static THD_FUNCTION(thdBtCommands, arg) {
+		//dbg("VC")
+		//	int i = 0;
+
+		// Delimiter used to separate messages
+		char DELIMITER = '\n';
+
+		// inizializza il buffer d caratteri
+		for (int i = 0; i < VOICECOMMANDMAXLEN; i++) { voiceCommandCharArray[i] = 0; }
+
+		while (1) {
+
+
+			// from https://github.com/hmartiro/android-arduino-bluetooth/tree/master/arduino/bluetooth_demo
+			// Forward anything received via USB to bluetooth
+			if (SERIAL_BT.available()) {
+
+				while (SERIAL_BT.available()) {
+					bluetooth_rx_buffer += (char)SERIAL_BT.read();
+				}
+
+				// Look for complete messages
+				parseWriteBuffer();
+				parseReadBuffer();
+			}
+
+
+
+			// attendo il testo sulla seriale
+			while (!SERIAL_BT.available()) { playSingleNote(1500, 40); chThdSleepMilliseconds(1500); }	// dbg(".") chThdYield();delay(50);dbg('.')
+
+
+			dbg("Something received on BT... ")
+				playSingleNote(NOTE_A1, 40);
+
+#pragma region [Esegue il parsing dei caratteri in ingresso alla seriale]
+
+			//noInterrupts();
+			int i = 0; char c = '\0';
+			while (SERIAL_BT.available() > 0 && i < VOICECOMMANDMAXLEN && c != '#')
+			{
+				// legge il carattere dalla seriale
+				char c = SERIAL_BT.read();
+
+				// l'app Android invia * all'inizio e # alla fine del testo
+				switch (c)
+				{
+				case '*': break;//salto il primo carattere * e non incremento i
+				case '#': voiceCommandCharArray[i] = '\0'; i++; break; // sostituisco con una pausa
+				default:
+					voiceCommandCharArray[i] = toupper(c);
+					//if ((c >= 'a') && (c <= 'z'))
+					//	voiceCommandCharArray[i] =c + ( 'A' - 'a');
+
+					i++;
+					break;
+				}
+
+			}
+
+#pragma endregion
+
+			// pulisce il resto del buffer
+			for (size_t j = i; j < VOICECOMMANDMAXLEN; j++) { voiceCommandCharArray[i] = '\0'; }
+
+			SPEAK(" e ");	//prova se funziona la voce
+
+							// elaboro il contenuto della stringa voiceCommandCharArray
+			processVoiceCommand();
+
+
+			chThdSleepMilliseconds(500);//	chThdYield();
+		}
+
+#pragma region cmdWiFi
+		/*
+		// da tenere allineata con robot.cs >  OnkbGetSensorsHighRate(ReceivedCommand arguments)
+		cmdWiFi.sendCmdStart(kbGetSensorsHRate);
+
+		cmdWiFi.sendCmdArg(robot.posCurrent.x);	//robot position X
+		cmdWiFi.sendCmdArg(robot.posCurrent.y);	//robot position y
+		cmdWiFi.sendCmdArg(robot.posCurrent.r);	//robot position alfa gradi
+
+		cmdWiFi.sendCmdArg(robot.status.irproxy.fw);	// IR proxy
+		cmdWiFi.sendCmdArg(robot.status.irproxy.fwHL);	// IR proxy
+		cmdWiFi.sendCmdArg(robot.status.irproxy.bk);	// IR proxy
+		cmdWiFi.sendCmdArg(robot.status.pirDome);		// movimento
+
+		cmdWiFi.sendCmdArg(robot.status.analog[0]);	//pot
+		cmdWiFi.sendCmdArg(robot.status.analog[1]);	//batteria
+		cmdWiFi.sendCmdArg(robot.status.analog[2]);	//light
+
+		cmdWiFi.sendCmdArg(robot.getReleStatus(0));		//rele 1
+		cmdWiFi.sendCmdArg(robot.getReleStatus(1));		//rel2
+
+		cmdWiFi.sendCmdArg(digitalReadFast(Pin_MotENR));	//status motori
+		cmdWiFi.sendCmdArg(digitalReadFast(Pin_MotENL));
+
+		cmdWiFi.sendCmdArg(robot.status.switchTop); // status switch modo Autonomo/slave
+		cmdWiFi.sendCmdArg(robot.status.laserOn); // laser
+		cmdWiFi.sendCmdArg(robot.readBattChargeLevel());
+
+
+		cmdWiFi.sendCmdArg(robot.status.gps.sats);		//gps
+		cmdWiFi.sendCmdArg(robot.status.gps.lat);
+		cmdWiFi.sendCmdArg(robot.status.gps.lng);
+
+
+
+		cmdWiFi.sendCmdEnd();
+		*/
+
+#pragma endregion
+
+		/*
+
+		// attendo il testo sulla seriale
+		while (!SERIAL_ROBOT.available()) { chThdSleepMilliseconds(50); }	// dbg(".") chThdYield();delay(50);dbg('.')
+
+		// get object from memory pool
+		msgObjVoice_t* p = (msgObjVoice_t*)chPoolAlloc(&memPoolSpeech);
+		if (!p) { Serial.println("chPoolAlloc failed");	while (1); }
+
+
+		dbg("[")
+		#pragma region [Esegue il parsing dei caratteri in ingresso alla seriale]
+
+		//noInterrupts();
+		int i = 0; char c = '\0';
+		while (SERIAL_ROBOT.available() > 0 && i < INPUTCHARARRAYSIZE && c != '#')
+		{
+		// mette i dati nella FIFO------------------
+		char c = SERIAL_ROBOT.read();
+		//p->str[i] = c;
+		chSerialRxBuffer[i] = c;
+		dbg(chSerialRxBuffer[i])
+		switch (c)
+		{
+		case '*': break;//salto il primo carattere * e non incremento i
+		case '#': //ultimo carattere, lo sostituisco con fine stringa
+		//p->str[i] = '\0';
+		chSerialRxBuffer[i]='\0';
+		i++;
+		break; // sostituisco con una pausa
+		default:
+		i++;
+		break;
+		}
+
+		//dbg(char(str[i])) messa qui fa casino
+		}
+		//p->size = i;
+
+		#pragma endregion
+		dbg("]")
+
+		// pulisce il resto del buffer
+		for (size_t j = i; j < INPUTCHARARRAYSIZE; j++) { chSerialRxBuffer[i] = '\0';} // p->str[i] = '\0';
+		interrupts();
+
+		SPEAK(chSerialRxBuffer);// send message
+
+		msg_t s = chMBPost(&mboxVoice, (msg_t)p, TIME_IMMEDIATE);
+		if (s != MSG_OK) { Serial.println("chMBPost failed");	while (1); }
+		*/
+
+	}
+#pragma endregion
 
 
 		//////////////////////////////////////////////////////////////////////////////////
@@ -1986,7 +1924,6 @@ static THD_FUNCTION(thdRobotCoreInterface, arg) {
 						{
 							buzz(PIN_BUZZER, 250, 100);
 
-							TS_Point p;
 							ts.getPosition(p.x, p.y, XPT2046::MODE_DFR, 20);
 							ts.getRaw(xRaw, yRaw, XPT2046::MODE_DFR, 20);
 							x = p.x;
@@ -2197,10 +2134,10 @@ static THD_FUNCTION(thdRobotCoreInterface, arg) {
 				// Turn PROCESS LED on.
 				tft.fillCircle(LCD_LED_SPEAK_POS_X, LCD_LED_SPEAK_POS_Y, LCD_LED_HALF_SIZE, VGA_OLIVE);
 
-				PoolObject_t *p;
+				msgObjVoice_t *p;
 
-				// get mailVoice
-				chMBFetch(&mailVoice, (msg_t*)&p, TIME_INFINITE);
+				// get mboxVoice
+				chMBFetch(&mboxVoice, (msg_t*)&p, TIME_INFINITE);
 
 
 				// Invia la stringa voce sulla seriale
@@ -2208,7 +2145,7 @@ static THD_FUNCTION(thdRobotCoreInterface, arg) {
 
 
 				// put memory back into pool
-				chPoolFree(&memPool, p);
+				chPoolFree(&memPoolSpeech, p);
 
 				chThdSleepMilliseconds(200);//	chThdYield();//
 				}
@@ -2278,10 +2215,7 @@ uint16_t getFreeSram() {
 void chSetup() {
 	dbg("Starting all chThreads...")
 
-	// fill pool with PoolObject array
-	for (size_t i = 0; i < MB_COUNT; i++) {
-		chPoolFree(&memPool, &PoolObject[i]);
-	}
+
 
 	//	chThdCreateStatic(waTftKeyboard, sizeof(waTftKeyboard), NORMALPRIO+3 , TftKeyboard, NULL);
 	/*
@@ -2295,15 +2229,15 @@ void chSetup() {
 	thdRobotCoreInterface:  + 1			>> no +2 OK
 	thdCommands:0  
 	*/
+	chThdCreateStatic(waThreadTFT, sizeof(waThreadTFT), NORMALPRIO +3, thdTFT, NULL);
+ 	chThdCreateStatic(waRotaryEncoder, sizeof(waRotaryEncoder), NORMALPRIO + 3, RotaryEncoder, NULL);
 	chThdCreateStatic(waRobotCoreInterface, sizeof(waRobotCoreInterface), NORMALPRIO + 2, thdRobotCoreInterface, NULL);
-	chThdCreateStatic(waComandiBT, sizeof(waComandiBT), NORMALPRIO + 2, thdComandiBT, NULL);
-	chThdCreateStatic(waThreadTFT, sizeof(waThreadTFT), NORMALPRIO + 3, thdTFT, NULL);
-//	chThdCreateStatic(waBtCommands, sizeof(waBtCommands), NORMALPRIO+2, thdCommands, NULL);
-	chThdCreateStatic(waRotaryEncoder, sizeof(waRotaryEncoder), NORMALPRIO + 2, RotaryEncoder, NULL);
-	chThdCreateStatic(waSpeech, sizeof(waSpeech), NORMALPRIO + 2, thdSpeech, NULL);
+	//chThdCreateStatic(waComandiVocali, sizeof(waComandiVocali), NORMALPRIO + 2, thdComandiVocali, NULL);
+	chThdCreateStatic(waFifoToSpeech, sizeof(waFifoToSpeech), NORMALPRIO + 2, thdFifoToSpeech, NULL);
+	//chThdCreateStatic(waBrain, sizeof(waBrain), NORMALPRIO+3, thdBrain, NULL);
+
 //	chThdCreateStatic(waFlashLed, sizeof(waFlashLed), NORMALPRIO + 4, FlashLed, NULL);
 	//chThdCreateStatic(waThreadEsplora, sizeof(waThreadEsplora), NORMALPRIO + 2, ThreadEsplora, NULL);//-Esplora
-
 	//chThdCreateStatic(waserialEcho, sizeof(waserialEcho), NORMALPRIO + 4, serialEcho, NULL);
 	//chThdCreateStatic(waFifoToSPEAK, sizeof(waFifoToSPEAK), NORMALPRIO+3, FifoToSPEAK, NULL);
 	while (1) {}
@@ -2321,8 +2255,24 @@ void setup()
 		SERIAL_SPEAK.begin(SERIAL_SPEAK_BAUD_RATE);
 // 		SERIAL_SPEAK.setTimeout(5000);
 		SERIAL_WIFI.begin(SERIAL_WIFI_BAUD_RATE);
-
 	#pragma endregion
+	dbg("MMI");
+
+
+	#pragma region test swSerial
+		#if 0
+				pinMode(Pin_SpeechSerialBusy, INPUT);
+				for (size_t i = 0; i < 3; i++)
+				{
+
+					SwSerialSpeech.print("io ");
+					delay(700);
+				}
+
+		#endif // 0
+	#pragma endregion
+
+	robotModel.initRobot(MODE_AUTONOMOUS, &cmdRobotCore);
 
 	#pragma region Inizializzazione TFT
 		#ifdef TFT_ili9488
@@ -2373,46 +2323,84 @@ void setup()
 			tft.setFont(SmallFont); //	tft.setFont(BigFont);
 
 
-			tft.setBackColor(0, 0, 0);
 			//---------------------------------------
 
 
 		#endif
+
+ 		tft.setBackColor(255, 0, 0);
+		TFTprintAtStr(TFTDATACOL, TFTROW(10), (char*)robotModel.getOperatingModeChar());
+		tft.setBackColor(0, 255, 255);
+		tft.setBackColor(0, 0, 0);
+
+
+
+	#pragma endregion
+	
+	#pragma region Impostazione Interupt Manopola Encoder
+
+		#if 0		//vecchia versione funzionante prima di usare ArduinoMenu
+		#pragma region Setup Interrupts for Rotary Encoders
+					attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_A), loadEncoderPositionOnChange, CHANGE);
+					attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_B), loadEncoderPositionOnChange, CHANGE);
+
+		#pragma endregion
+		#else
+				//al posto di Timer1 + funzione TimerIsr() uso direttamente gli interupt
+					Timer1.initialize(5000); // every 0.05 seconds
+					Timer1.attachInterrupt(timerIsr);
+					//attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_A), timerIsr, CHANGE);
+					//attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_B), timerIsr, CHANGE);
+					qEnc.setAccelerationEnabled(false);
+					qEnc.setDoubleClickEnabled(true); // must be on otherwise the menu library Hang
+													  // ISR init
+
+					myMenu.init();//setup geometry after tft initialized
+								  //restrict menu area, for scroll and boundary tests
+					myMenu.maxX = 30; //larghezza max menu
+					myMenu.maxY = 8;  //numero di voci del menu 
+					myMenu.bgColor = VGA_GRAY;
+					myMenu.disabledColor = VGA_BLACK;
+					mainMenu.setPosition(5, 380);
+					mainMenu.data[1]->enabled = false;
+					//subMenu.setPosition(5, 380);
+
+
+					//myMenu.enabledColor = VGA_BLUE;
+
+		#endif // 0
+
+
 	#pragma endregion
 
-			
-#if 0		//vecchia versione funzionante prima di usare ArduinoMenu
-#pragma region Setup Interrupts for Rotary Encoders
-			attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_A), loadEncoderPositionOnChange, CHANGE);
-			attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_B), loadEncoderPositionOnChange, CHANGE);
-
-#pragma endregion
-#else
-			//al posto di Timer1 + funzione TimerIsr() uso direttamente gli interupt
-			Timer1.initialize(5000); // every 0.05 seconds
-			Timer1.attachInterrupt(timerIsr);
-			//attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_A), timerIsr, CHANGE);
-			//attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_B), timerIsr, CHANGE);
-			qEnc.setAccelerationEnabled(false);
-			qEnc.setDoubleClickEnabled(true); // must be on otherwise the menu library Hang
-											  // ISR init
-
-			myMenu.init();//setup geometry after tft initialized
-						  //restrict menu area, for scroll and boundary tests
-			myMenu.maxX = 30; //larghezza max menu
-			myMenu.maxY = 8;  //numero di voci del menu 
-			mainMenu.setPosition(5, 380);
-			mainMenu.data[1]->enabled = false;
-			myMenu.bgColor = VGA_GRAY;
-			//myMenu.enabledColor = VGA_BLUE;
-			myMenu.disabledColor = VGA_BLACK;
-
-#endif // 0
-
-
-	dbg("MMI");
 	singMyMelody(myMelody1);
-	SPEAK_TEST
+
+	#pragma region Inizializzazione e Test memory pool allocation
+		// fill pool with PoolObject array
+		for (size_t i = 0; i < MBOX_CAPACITY_VOICE; i++) {
+			chPoolFree(&memPoolVoice, &PoolObject[i]);
+		}
+
+		#if 0
+
+			// get object from memory pool
+			PoolObject_t* p = (PoolObject_t*)chPoolAlloc(&memPoolVoice);
+			if (!p) { Serial.println("chPoolAlloc failed from setup");	while (1); }
+			p->strSpeech = "t ";		// (char*)strSpeech;
+												//p->strSpeech = " imbecille spostati che devo passare";		// (char*)strSpeech;
+												//strcpy(p->str, "oi");
+												//p->size = 2;
+												//dbg2("thdFeedFifo send: ",p->strSpeech)
+
+												// send message
+			msg_t s = chMBPost(&mailVoice, (msg_t)p, TIME_IMMEDIATE);
+			if (s != MSG_OK) { Serial.println("chMBPost failed");	while (1); }
+
+			SPEAK_TEST
+
+		#endif // 0
+
+	#pragma endregion
 
 	chBegin(chSetup);	
 }
@@ -2421,3 +2409,5 @@ void loop() {
 }
 
 #pragma endregion
+
+
