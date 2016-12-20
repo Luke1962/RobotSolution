@@ -87,7 +87,7 @@
 
 		#include <string.h> 
 		#include "stringlib.h" //Funzioni di manipolazione stringhe di tipo CHARARRAY
-		//#include <digitalWriteFast.h>
+		#include <digitalWriteFast/digitalWriteFast.h>
 		//#include <CmdMessenger/CmdMessenger.h>
 		//#include <robot\Commands_Enum.h>
 		#include <MyRobotLibs\robotModel.h>
@@ -150,7 +150,7 @@
  		menuUTFT myMenu(tft);
 		#if 1
 
-			ClickEncoder qEnc(Pin_ROT_ENCODER_B, Pin_ROT_ENCODER_A, Pin_ROT_ENCODER_SWITCH, 2, LOW);
+			ClickEncoder qEnc(Pin_ROT_ENCODER_A, Pin_ROT_ENCODER_B, Pin_ROT_ENCODER_SWITCH, 2, LOW);
 			ClickEncoderStream enc(qEnc, 1);// simple quad encoder fake Stream
 			Stream* menuInputs[] = { &enc,&Serial };
 			chainStream<2> in(menuInputs);
@@ -192,21 +192,33 @@
 			//	OP("Autonomous",mfSetModeAutonomous),
 			//	OP("Slave",mfSetModeSlave)
 			//);
-			MENU(subMenu, "Set Mode"
+			#define MENUPOSITION_X 5
+			#define MENUPOSITION_Y 380
+
+			MENU(subMenuMode, "Set Mode.."
 				,OP("Autonomous", mfSetModeAutonomous)
 				,OP("slave", mfSetModeSlave)
  			);
+			MENU(subMenuPose, "Modify.."
+				, FIELD(robotModel.status.posCurrent.x, "x", " cm", 0, 1000, 10, 1)
+				, FIELD(robotModel.status.posCurrent.y, "y", " cm", 0, 1000, 10, 1)
+				, FIELD(robotModel.status.posCurrent.r, "x", " deg", 0, 360, 15, 1)
+				, FIELD(robotModel.statusOld.sensors.pirDome, "PIR", " 0/1", 0, 1, 1, 0)
+				
+			);
 
 			MENU(mainMenu, "Sistema"
  				,OP("Option C", mfSayIt)
 				,OP("Speech Test", mfTestSpeech)
 
+				,FIELD(robotModel.status.sensors.batCharge, "Batt", "%", 0, 100, 1, 0)
 				,FIELD(aValue, "Value", "%", 0, 100, 1, 0)
-				,FIELD(aValue, "Value", "%", 0, 100, 1, 0)
-				,FIELD(robotModel.status.sensors.analog[1], "A1", " n.", 1, 60000, 10, 1)
-				,SUBMENU(subMenu)
+				,FIELD(robotModel.status.sensors.analog[0], "A0", " n.", 0, 1000, 20, 1)
+				,FIELD(robotModel.status.sensors.analog[1], "A1", " n.", 1, 1000, 10, 1)
+				,SUBMENU(subMenuMode)
+				,SUBMENU(subMenuPose)
 			);
-
+			
 			// messe dopo per poter chiamare menu.redraw();
 			bool mfSayIt(prompt& p, menuOut& o, Stream &c) {
 				tft.setBackColor(0, 0, 0);
@@ -930,32 +942,7 @@
 		static THD_FUNCTION(RotaryEncoder, arg) {
 			while (1) {
 				mainMenu.poll(myMenu, in);
-				/*
-				loadEncoderPositionOnChange();
-				if (encoderPositionUpdated()) {
-					if (encoder_delta>0)
-					{
-						playSingleNote(NOTE_A5, 40);
-					}
-					else
-					{
-						playSingleNote(NOTE_C4, 40);
-					}
-					//printEncoderInfo();
-					robotModel.status.sensors.analog[Pin_AnaPot1 - Pin_AnaBase]= current_encoder_position;
-				}
-				if (!digitalRead(Pin_ROT_ENCODER_SWITCH))//è a logica negata!
-				{
-					playSingleNote(100, 40);
-					current_encoder_position = 0;
-					robotModel.status.sensors.analog[Pin_AnaPot1 - Pin_AnaBase] = current_encoder_position;
-				}
-				//digitalWrite(PIN_LED, 1);
-				//chThdSleepMilliseconds(200 + current_encoder_position);
-				//digitalWrite(PIN_LED, 0);// Turn LED on.
-				//chThdSleepMilliseconds(200 + current_encoder_position);
-				*/
-				chThdSleepMilliseconds(300);//	chThdYield();//	
+				chThdSleepMilliseconds(400);//	chThdYield();//	
 			}
 		}
 	#pragma endregion 
@@ -965,22 +952,32 @@
 	//////////////////////////////////////////////////////////////////////////////////
 	#pragma region  Processo	B R A I N    
 		static THD_WORKING_AREA(waBrain, 100);
-		static THD_FUNCTION(thdBrain, arg) {
+		static THD_FUNCTION(thdBrain, arg) 
+		{
+			int sleepTime = 500;
 			const int FWDIST = 10; //distanza avanzamento
 			int alfa = 0;
 			int cmDone = 0; // percorso eseguito a valle di un comando moveCm o RotateDeg
 			int stuckCount = 0;
 
-			while (1) {
+			while (1) 
+			{
+				playSingleNote(1200, 30);
 				#pragma region HUMAN DETECTION
 				//-------------------------------------------------------------------
 				// chiedo chi sei solo se è attivo il pir da meno di un secondo
 				if ((robotModel.statusOld.sensors.pirDome != robotModel.status.sensors.pirDome)
 					&& (robotModel.status.ts - robotModel.statusOld.ts > 1000))
 				{
-					SPEAK_CIAOCHISEI
+						playSingleNote(1000, 500);
+						SPEAK_CIAOCHISEI
 						//resettto lo stato
 						robotModel.statusOld.sensors.pirDome = false;
+						sleepTime = 2000;
+				}
+				else
+				{
+					sleepTime = 800;
 				}
 				#pragma endregion
 
@@ -988,17 +985,22 @@
 				// Gestione cambio modalità-----------------------------------------
 				// Switch TOP commutato da oltre un secondo?
 				if ((robotModel.status.sensors.switchTop != robotModel.statusOld.sensors.switchTop)
-					&& (robotModel.status.ts - robotModel.statusOld.ts > 1000)) {
+					&& (robotModel.status.ts - robotModel.statusOld.ts > 1000)) 
+				{
 					if (robotModel.status.sensors.switchTop)	//AUTONOMO?
 					{
 
 
 						SPEAK(" okei okei esploro");
+						sleepTime = 2000;
+
 					}
 					else // MODE_SLAVE
 					{
 
 						SPEAK(" okei comanda");
+						sleepTime = 2000;
+
 					}
 				}
 				#pragma endregion
@@ -1008,64 +1010,62 @@
 				//////////////////////////////////////////////////////////////////////////////////
 				//////////////////////////////////////////////////////////////////////////////////
 				#pragma region ESPLORA
-					/*
+					#if 0
+						while (robotModel.status.operatingMode == AUTONOMOUS)
+						{
+
+							TOGGLEPIN(Pin_LED_TOP_B);
+							robotModel.status.parameters.sonarStartAngle = 0;
+							robotModel.status.parameters.sonarEndAngle = 180;
+							robotModel.status.parameters.sonarStepAngle = 30;
+							robotModel.status.parameters.sonarScanSweeps = 1;
+							robotModel.status.parameters.sonarMedianSamples = 2;
+							robotModel.status.parameters.sonarScanSpeed = 30; // map(analogRead(Pin_AnaPot1), 0, 1023, 10, 500);  //was = 30 ms di attesa tra due posizioni
+
+							robotModel.SonarScanBatch(&servoSonar, &Sonar);
+							alfa = 90 - robotModel.status.parameters.SonarMaxDistAngle;
+							SERIAL_MSG.print("Max dist @alfa:"); SERIAL_MSG.println(alfa);
+							dbg2("Max dist cm:", robotModel.status.parameters.sonarMaxDistance)
+								TOGGLEPIN(Pin_LED_TOP_B);
+
+							// invia i dati Sonar
+							OnkbSonarSendData(&cmdMMI);
+							TOGGLEPIN(Pin_LED_TOP_B);
 
 
-					while (robotModel.status.operatingMode == AUTONOMOUS)
-					{
-
-					TOGGLEPIN(Pin_LED_TOP_B);
-					robotModel.status.parameters.sonarStartAngle = 0;
-					robotModel.status.parameters.sonarEndAngle = 180;
-					robotModel.status.parameters.sonarStepAngle = 30;
-					robotModel.status.parameters.sonarScanSweeps = 1;
-					robotModel.status.parameters.sonarMedianSamples = 2;
-					robotModel.status.parameters.sonarScanSpeed = 30; // map(analogRead(Pin_AnaPot1), 0, 1023, 10, 500);  //was = 30 ms di attesa tra due posizioni
-
-					robotModel.SonarScanBatch(&servoSonar, &Sonar);
-					alfa = 90 - robotModel.status.parameters.SonarMaxDistAngle;
-					SERIAL_MSG.print("Max dist @alfa:"); SERIAL_MSG.println(alfa);
-					dbg2("Max dist cm:", robotModel.status.parameters.sonarMaxDistance)
-					TOGGLEPIN(Pin_LED_TOP_B);
-
-					// invia i dati Sonar
-					OnkbSonarSendData(&cmdMMI);
-					TOGGLEPIN(Pin_LED_TOP_B);
-
-
-					robotModel.rotateDeg(alfa);
-					cmDone = robotModel.moveCm(robotModel.status.parameters.sonarMaxDistance);	// avanti
-					if (cmDone < (robotModel.status.parameters.sonarMaxDistance - 1))	//ostacolo ?
-					{
-					SERIAL_MSG.println("1,Obst!;");
-					robotModel.moveCm(-FWDIST);	// torna indietro
-					TOGGLEPIN(Pin_LED_TOP_B);
-					stuckCount++;
-					if (stuckCount>2)
-					{
-					robotModel.rotateDeg(180); //inverto la direzione
-					TOGGLEPIN(Pin_LED_TOP_B);
-					stuckCount = 0;
-					}
-					}
-					else //nessun ostacolo, azzero il contatore
-					{
-					stuckCount = 0;
-					}
-					TOGGLEPIN(Pin_LED_TOP_B);
+							robotModel.rotateDeg(alfa);
+							cmDone = robotModel.moveCm(robotModel.status.parameters.sonarMaxDistance);	// avanti
+							if (cmDone < (robotModel.status.parameters.sonarMaxDistance - 1))	//ostacolo ?
+							{
+								SERIAL_MSG.println("1,Obst!;");
+								robotModel.moveCm(-FWDIST);	// torna indietro
+								TOGGLEPIN(Pin_LED_TOP_B);
+								stuckCount++;
+								if (stuckCount > 2)
+								{
+									robotModel.rotateDeg(180); //inverto la direzione
+									TOGGLEPIN(Pin_LED_TOP_B);
+									stuckCount = 0;
+								}
+							}
+							else //nessun ostacolo, azzero il contatore
+							{
+								stuckCount = 0;
+							}
+							TOGGLEPIN(Pin_LED_TOP_B);
 
 
-					chThdSleepMilliseconds(1500);	// Sleep for 150 milliseconds.
+							chThdSleepMilliseconds(1500);	// Sleep for 150 milliseconds.
 
-					}
+						}
+
+					#endif // 0
 					//  return 0;
-					}
-					*/
-
+					
 				#pragma endregion
 
 
- 				chThdSleepMilliseconds(500);//	chThdYield();//	
+ 				chThdSleepMilliseconds(sleepTime);//	chThdYield();//	
 
 			}
 		}
@@ -1152,13 +1152,15 @@
 			bool HbLed = 0; //stato del led che visualizza l'ttivit� di questo Thread
 			byte r = TFTCAPTION_STARTINGROW;
 			char *strTmp;
+			unsigned long t1;
+			unsigned long t2;
 
 			tft.clrScr();
 			tftPrintCaptions();
-
 			//drawButtons();
-			while (true)// loop di visualizzazione dati
+			while (true)// loop di visualizzazione dati dai 38 ai 50ms (in base alla lunghezza dei gauge)
 			{
+				t1 = millis();
 				// imposta i colori di default
 				tft.setBackColor(VGA_BLACK);
 				tft.setColor(VGA_WHITE);
@@ -1205,7 +1207,7 @@
 			//TFTprintAtStr(0, TFTROW(0), robotModel.getOperatingModeChar());
  
 
-#if 1
+
 				tft.setColor(VGA_WHITE);
 				tft.setBackColor(0, 0, 0);
 				r = TFTCAPTION_STARTINGROW;
@@ -1213,9 +1215,10 @@
 				TFTprintAtNumI(TFTDATACOL, TFTROW(r++), getFreeSram(), VGA_GRAY);
 
 				/// Visualizza dati GPS---------------------------------------------------
-				TFTprintAtNumF(TFTDATACOL, TFTROW(r), robotModel.status.sensors.gps.lat, 8, VGA_BLUE);
-				TFTprintAtNumF(TFTDATACOL + 100, TFTROW(r), robotModel.status.sensors.gps.lng, 8, VGA_BLUE);
+				TFTprintAtNumI(TFTDATACOL, TFTROW(r), robotModel.status.sensors.gps.lat,   VGA_BLUE);
+				TFTprintAtNumI(TFTDATACOL + 100, TFTROW(r), robotModel.status.sensors.gps.lng,   VGA_BLUE);
 				TFTprintAtNumI(TFTDATACOL + 200, TFTROW(r++), robotModel.status.sensors.gps.sats, VGA_BLUE);
+
 
 
 
@@ -1233,7 +1236,6 @@
 				drawLedRect(TFTDATACOL + 30, TFTROW(r++), robotModel.status.sensors.pirDome, VGA_RED);
 
 
-#endif // 0
 
 		
  
@@ -1273,8 +1275,11 @@
 				#endif // 0
 
 				#pragma endregion
+				t2= millis();
 
-		
+				//millisecondi impiegati dal loop sulla prima riga
+				TFTprintAtNumI(TFTDATACOL+100, TFTCAPTION_STARTINGROW, t2-t1, VGA_GRAY);
+
 			chThdSleepMilliseconds(1000);//chThdYield();
 				
 			}
@@ -1282,6 +1287,33 @@
 	}
 
 	#pragma endregion 
+#pragma region // BLINK LED
+#define PIN_LED  13
+
+	// ///////////////////////////////////////////////////////////////////////////////
+	//  blinking LED       ///////////////////////////////////////////////////////////
+	// ///////////////////////////////////////////////////////////////////////////////
+
+	// 64 byte stack beyond task switch and interrupt needs
+	static THD_WORKING_AREA(waFlashLed, 64);
+	static THD_FUNCTION(thdFlashLed, arg) {
+		// Flash led every 200 ms.
+		pinMode(PIN_LED, OUTPUT);		digitalWrite(PIN_LED, 0);	// led superiore
+
+		while (1) {
+			// Turn LED on.
+			digitalWriteFast(PIN_LED, HIGH);
+			// Sleep for 50 milliseconds.
+			chThdSleepMilliseconds(40);
+
+			// Turn LED off.
+			digitalWriteFast(PIN_LED, LOW);
+
+			// Sleep for 150 milliseconds.
+			chThdSleepMilliseconds(960);
+		}
+	}
+#pragma endregion // BLINK LED----------------------------------------------------
 
 // FINE PROCESSI CHIBIOS ////////////////////////////////////////////////////////////////////////////////
 
@@ -2212,7 +2244,7 @@ uint16_t getFreeSram() {
 
 //------------------------------------------------------------------------------
 // main thread runs at NORMALPRIO
-void chSetup() {
+void thd_Setup() {
 	dbg("Starting all chThreads...")
 
 
@@ -2229,17 +2261,16 @@ void chSetup() {
 	thdRobotCoreInterface:  + 1			>> no +2 OK
 	thdCommands:0  
 	*/
+	chThdCreateStatic(waFlashLed, sizeof(waFlashLed), NORMALPRIO + 4, thdFlashLed, NULL);
 	chThdCreateStatic(waThreadTFT, sizeof(waThreadTFT), NORMALPRIO +3, thdTFT, NULL);
- 	chThdCreateStatic(waRotaryEncoder, sizeof(waRotaryEncoder), NORMALPRIO + 3, RotaryEncoder, NULL);
+ 	chThdCreateStatic(waRotaryEncoder, sizeof(waRotaryEncoder), NORMALPRIO + 4, RotaryEncoder, NULL);
 	chThdCreateStatic(waRobotCoreInterface, sizeof(waRobotCoreInterface), NORMALPRIO + 2, thdRobotCoreInterface, NULL);
 	//chThdCreateStatic(waComandiVocali, sizeof(waComandiVocali), NORMALPRIO + 2, thdComandiVocali, NULL);
 	chThdCreateStatic(waFifoToSpeech, sizeof(waFifoToSpeech), NORMALPRIO + 2, thdFifoToSpeech, NULL);
-	//chThdCreateStatic(waBrain, sizeof(waBrain), NORMALPRIO+3, thdBrain, NULL);
+	chThdCreateStatic(waBrain, sizeof(waBrain), NORMALPRIO+3, thdBrain, NULL);
 
-//	chThdCreateStatic(waFlashLed, sizeof(waFlashLed), NORMALPRIO + 4, FlashLed, NULL);
 	//chThdCreateStatic(waThreadEsplora, sizeof(waThreadEsplora), NORMALPRIO + 2, ThreadEsplora, NULL);//-Esplora
 	//chThdCreateStatic(waserialEcho, sizeof(waserialEcho), NORMALPRIO + 4, serialEcho, NULL);
-	//chThdCreateStatic(waFifoToSPEAK, sizeof(waFifoToSPEAK), NORMALPRIO+3, FifoToSPEAK, NULL);
 	while (1) {}
 }
 
@@ -2337,40 +2368,25 @@ void setup()
 
 	#pragma endregion
 	
-	#pragma region Impostazione Interupt Manopola Encoder
+	#pragma region Impostazione Interupt Manopola Encoder e MENU
+		//al posto di Timer1 + funzione TimerIsr() uso direttamente gli interupt
+		Timer1.initialize(5000); // every 0.05 seconds
+		Timer1.attachInterrupt(timerIsr);
+		qEnc.setAccelerationEnabled(false);
+		qEnc.setDoubleClickEnabled(true); // must be on otherwise the menu library Hang
 
-		#if 0		//vecchia versione funzionante prima di usare ArduinoMenu
-		#pragma region Setup Interrupts for Rotary Encoders
-					attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_A), loadEncoderPositionOnChange, CHANGE);
-					attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_B), loadEncoderPositionOnChange, CHANGE);
-
-		#pragma endregion
-		#else
-				//al posto di Timer1 + funzione TimerIsr() uso direttamente gli interupt
-					Timer1.initialize(5000); // every 0.05 seconds
-					Timer1.attachInterrupt(timerIsr);
-					//attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_A), timerIsr, CHANGE);
-					//attachInterrupt(digitalPinToInterrupt(Pin_ROT_ENCODER_B), timerIsr, CHANGE);
-					qEnc.setAccelerationEnabled(false);
-					qEnc.setDoubleClickEnabled(true); // must be on otherwise the menu library Hang
-													  // ISR init
-
-					myMenu.init();//setup geometry after tft initialized
-								  //restrict menu area, for scroll and boundary tests
-					myMenu.maxX = 30; //larghezza max menu
-					myMenu.maxY = 8;  //numero di voci del menu 
-					myMenu.bgColor = VGA_GRAY;
-					myMenu.disabledColor = VGA_BLACK;
-					mainMenu.setPosition(5, 380);
-					mainMenu.data[1]->enabled = false;
-					//subMenu.setPosition(5, 380);
-
-
-					//myMenu.enabledColor = VGA_BLUE;
-
-		#endif // 0
-
-
+		myMenu.init();//setup geometry after tft initialized
+		myMenu.maxX = 15; //larghezza max menu in caratteri (non funz.)
+		myMenu.maxY = 8;  //numero di voci del menu 
+		myMenu.enabledColor = VGA_WHITE; //Colore delle voci abilitate
+		myMenu.bgColor = VGA_GRAY;  //Sfondo
+		myMenu.disabledColor = VGA_BLACK;
+		mainMenu.setPosition(MENUPOSITION_X, MENUPOSITION_Y);
+		subMenuMode.setPosition(MENUPOSITION_X, MENUPOSITION_Y);
+		subMenuMode.setPosition(MENUPOSITION_X, MENUPOSITION_Y);
+		subMenuPose.setPosition(MENUPOSITION_X, MENUPOSITION_Y);
+		subMenuPose.setPosition(MENUPOSITION_X, MENUPOSITION_Y);
+		//mainMenu.data[1]->enabled = false;
 	#pragma endregion
 
 	singMyMelody(myMelody1);
@@ -2402,7 +2418,7 @@ void setup()
 
 	#pragma endregion
 
-	chBegin(chSetup);	
+	chBegin(thd_Setup);	
 }
 void loop() {
 	// not used
