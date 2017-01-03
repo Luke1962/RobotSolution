@@ -5,7 +5,7 @@
 #include <robotModel.h>
 #include "Commands_Enum.h"
 #include "SpeakSerialInterface.h"
-
+#include <TFT_HAL\TFT_HAL.h>
 ///extern struct robotModel_c robot;
 //Dichiarazione di funzione che punta all'indirizzo zero
 void( *reboot )(void) = 0;
@@ -23,7 +23,7 @@ struct myMsgStruct
 {
 	int index;
 	char msgString[MAX_STRING_SIZE_TFTMSG];
-	unsigned int mycrap;
+
 	unsigned long long timestamp;
 };
 //struct myMsgStruct
@@ -139,15 +139,13 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 	}
 	void OnUnknownCommand(CmdMessenger2 *cmd)
 	{
+		int cmdId = (int)cmd->commandID();
 
-		SPEAK("NON HO CAPITO ");
-//		SPEAK(cmd->commandID());
-		//String s;
-		cmd->readStringArg();
-		//	cmd->sendCmd(kError,"\nCommand not recognised");
+		playSingleNote(100, 100);
+		TFT_PRINT_MSG(cmd->streamBuffer);
+		dbg(cmd->streamBuffer)
+		cmd->reset();
 
-		char s[] = "unkwownCmd :";
-		cmdMsg(cmd, s);
 
 	}
 	void OnCmdRobotHello(CmdMessenger2 *cmd)
@@ -341,7 +339,7 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 
 
 	/// ///////////////////////////////////////////////////////////////////////
-	//  RICEZIONE SENSORI A BASSO RATE
+	//  INVIA, SU RICHIESTA DA WIFI O BTH LO STATO DEI SENSORI 
 	/// ///////////////////////////////////////////////////////////////////////
 	void OnCmdGetSensorsHRate(CmdMessenger2 *cmd)
 	{
@@ -454,7 +452,8 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 		//}
 	}
 	void OnCmdRobotStopMoving(CmdMessenger2 *cmd) {
- 
+		//robotModel.cmdMotionStop()
+
 	}
 
 
@@ -586,8 +585,14 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 		robotModel.status.operatingMode =  (operatingMode_e)cmd->readInt16Arg();
 
 	}
-
-
+	void OnkbMovedCm(CmdMessenger2 *cmd)  
+	{
+		robotModel.updatePose(cmd->readDoubleArg(),0);
+	}
+	void OnkbRotatedDeg(CmdMessenger2 *cmd)  
+	{
+		robotModel.updatePose(0,cmd->readInt16Arg());
+	}
 	void OnkbGetPose(CmdMessenger2 *cmd)  //attenzione al limite dei 9600baud
 	{
 		robotModel.statusOld = robotModel.status;  // save current status
@@ -619,15 +624,19 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 		char *strSpeech = cmd->readStringArg();
 		/// metto in coda nella FiFO la  frase da pronunciare
 		// send message
-		dbg("OnCmdSpeech");
+		dbg("OnCmdSpeech...");
+		dbg(strSpeech)
 		SPEAK(strSpeech);
+		TFT_PRINT_MSG(strSpeech);
 
 	}
 	// su ricezione di una stringa messaggio, la mette nel buffer
 	void	OnMsg(CmdMessenger2 *cmd) {
 		// lettura stringa dalla seriale
 		char *msgIn = cmd->readStringArg();
-
+		dbg("**MSG**")
+		TFT_PRINT_MSG( msgIn);
+#if 0
 
 		// send message
 		dbg(msgIn);
@@ -643,31 +652,35 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 		if (!myRingBufTftMsg->isFull(myRingBufTftMsg))
 		{
 			// metto il messaggio in ring_buf----------
-			// metto il messaggio in ring_buf----------
+			// così non funziona!! -> strcpy(tmpBuff, msgOutVoice.msgString);
 			for (size_t i = 0; i < sizeof(msgIn); i++)
 			{
 				msgOutTftMsg.msgString[i] = msgIn[i];
 			}
+			msgOutTftMsg.index = myRingBufTftMsg->elements;
+			msgOutTftMsg.timestamp = millis();
 			//-----------------------------------------
-			// così non funziona!! -> strcpy(tmpBuff, msgOutVoice.msgString);
+
 
 			myRingBufTftMsg->add(myRingBufTftMsg, &msgOutTftMsg);
 			//-----------------------------------------
 
 			dbg2("msgOutTftMsg out :", msgOutTftMsg.msgString)
-			dbg2("myRingBufTftMsg->elem:", myRingBufTftMsg->elements)
+				dbg2("myRingBufTftMsg->elem:", myRingBufTftMsg->elements)
 
-			chThdSleepMilliseconds(500);//	chThdYield();
+				chThdSleepMilliseconds(500);//	chThdYield();
 
 		}
 		else //full
 		{
 			dbg2("FULL myRingBufTftMsg->elem:", myRingBufTftMsg->elements)
- 			dbg2("........FreeSram", getFreeSram())
-			//attendo più a lungo per permettere di svuotare il buffer
-			chThdSleepMilliseconds(4000);//	chThdYield();
+				dbg2("........FreeSram", getFreeSram())
+				//attendo più a lungo per permettere di svuotare il buffer
+				chThdSleepMilliseconds(4000);//	chThdYield();
 		}
 
+
+#endif // 0
 
 	}
 
@@ -686,12 +699,12 @@ void attachCommandCallbacks(CmdMessenger2 *cmd)		//va messa in fondo
 		//cmd->attach(CmdRobotHello, OnCmdRobotHello);
 		//cmd->attach(CmdReboot, OnCmdReboot);
 
-		//cmd->attach(CmdRobotStartMoving, OnCmdRobotStartMoving);
-		//cmd->attach(CmdRobotStopMoving, OnCmdRobotStopMoving);
+		cmd->attach(CmdRobotStartMoving, OnCmdRobotStartMoving);
+		cmd->attach(CmdRobotStopMoving, OnCmdRobotStopMoving);
 
-		//cmd->attach(CmdRobotMoveCm, OnCmdRobotMoveCm);
+		cmd->attach(CmdRobotMoveCm, OnCmdRobotMoveCm);
+		cmd->attach(CmdRobotRotateDeg, OnCmdRobotRotateDeg);
 		//cmd->attach(CmdRobotRotateRadiants, OnCmdRobotRotateRadiants);
-		//cmd->attach(CmdRobotRotateDeg, OnCmdRobotRotateDeg);
 
 		//cmd->attach(CmdRobotRele, OnCmdRobotRele);
 		//cmd->attach(CmdSetLed, OnCmdSetLed);
@@ -700,6 +713,8 @@ void attachCommandCallbacks(CmdMessenger2 *cmd)		//va messa in fondo
 
 		cmd->attach(kbGetSensorsHRate, OnkbGetSensorsHRate);
 		cmd->attach(kbGetSensorsLRate, OnkbGetSensorsLRate);
+		cmd->attach(kbMovedCm, OnkbMovedCm);
+		cmd->attach(kbRotationDeg, OnkbRotatedDeg);
 		cmd->attach(kbGetPose, OnkbGetPose);
 		cmd->attach(CmdGetSensorsLRate, OnCmdGetSensorsLRate);
 		cmd->attach(CmdGetSensorsHRate, OnCmdGetSensorsHRate);

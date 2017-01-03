@@ -1,16 +1,16 @@
 // COMANDI PER TEST: 
 //AVANTI 20 E INDIETRO 20: 
 //19,20;19,-20;
-#include <I2Cdev.h>
+
+
 //////////////////////////////////////////////////////////////////////////////////
 // CONFIGURAZIONE DEL SISTEMA                  ///////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////
 #pragma region CONFIGURAZIONE DEL SISTEMA   
 #define delay(ms) chThdSleepMilliseconds(ms) 
 
-#define DEBUG_OFF
+//#define DEBUG_OFF
 //#define DEBUG_ON
-
 #include <MyRobotLibs\dbg.h>
 
 #include <MyRobotLibs\systemConfig.h>
@@ -18,7 +18,6 @@
 
 #pragma endregion
 
-#include <i2cdevlib-master\Arduino\HMC5883L\HMC5883L.h>
 // ////////////////////////////////////////////////////////////////////////////////////////////
 // ///																						///
 // ///       LIBRERIE 																		///
@@ -26,7 +25,10 @@
 // ///		Configuration Properties >C++ > Path											///
 // ////////////////////////////////////////////////////////////////////////////////////////////
 #pragma region LIBRERIE
-#include <Wire.h>
+
+//#include <I2C\I2C.h>//was
+#include <Wire\Wire.h>
+#include <I2Cdev\I2Cdev.h>
 
 #include <digitalWriteFast.h>
 #include <ChibiOS_AVR.h>
@@ -40,12 +42,10 @@
 //#include <FlexiTimer2\FlexiTimer2.h>
 //#include <encoder/Encoder.h>
 //#include "stringlib.h"
-#include <Servo.h> //deve restare qui altrimenti il linker s'incazza (??)
-#include <Newping\NewPing.h>
-#include <PWM\PWM.h>
 //#include <avr/wdt.h>
 //#include <robotmodel.h>
 #include <robot.h>
+
 
 
 #pragma endregion
@@ -56,18 +56,18 @@
 #pragma region CREAZIONE OGGETTI GLOBALI
 #if OPT_COMPASS
 	//#include <Adafruit_Sensor\Adafruit_Sensor.h> //richiesto dalla liberia compass Adafruit_HMC5883_U
-#include <I2Cdev\I2Cdev.h>
  	#include <HMC5883L\HMC5883L.h>
-
-	//#include <My_HMC5883\My_HMC5883.h>	//compass
 	HMC5883L compass;
-//	#define COMPASS HMC5883L
+	#define COMPASS HMC5883L
 #endif // COMPASS
 
 #if OPT_SERVOSONAR
 	// va messo prima dell'istanza del robot
 	#include <Newping\NewPing.h>
 	#include <Servo\src\Servo.h>
+#include <Servo.h> //deve restare qui altrimenti il linker s'incazza (??)
+
+#include <PWM\PWM.h>
 	Servo servoSonar;
 	NewPing Sonar(Pin_SonarTrig, Pin_SonarEcho);
 #endif
@@ -132,13 +132,13 @@ struct mboxObject_t {
 mboxObject_t msgObjArray[MBOX_COUNT];
 
 // memory pool structure
-MEMORYPOOL_DECL(memPool, MBOX_COUNT, 0);
+//MEMORYPOOL_DECL(memPool, MBOX_COUNT, 0);
 
 // slots for mailbox messages
-msg_t letter[MBOX_COUNT];
+//msg_t letter[MBOX_COUNT];
 
 // mailbox structure
-MAILBOX_DECL(mailVoice, &letter, MBOX_COUNT);
+//MAILBOX_DECL(mailVoice, &letter, MBOX_COUNT);
 						
 
 /// ///////////////////////////////////////////////////////////////////////////////
@@ -252,7 +252,7 @@ chThdSleepMilliseconds(1500);	// Sleep for 150 milliseconds.
 
 //////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////
-// thread 2 - lettura sensori in robot.status
+// thread 2A - lettura sensori HR in robot.status
 //////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////
 static THD_WORKING_AREA(waReadSensorsHR, 400);
@@ -264,7 +264,7 @@ static THD_FUNCTION(thdReadSensorsHR, arg) {
 
 	while (1)
 	{
-		dbg("1,thdReadSensors;")
+		dbg("1,S HR>;")
   		digitalWriteFast(Pin_LED_TOP_R, robot.status.tictac);//LEDTOP_R_ON
 
 		chMtxLock(&mutexSensors);
@@ -280,6 +280,42 @@ static THD_FUNCTION(thdReadSensorsHR, arg) {
 		}
 		else {
 			chThdSleepMilliseconds(3000);
+		} 
+
+
+	}
+	//  return 0;
+}
+//////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////
+// thread 2B - lettura sensori LR in robot.status
+//////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////
+static THD_WORKING_AREA(waReadSensorsLR, 400);
+static THD_FUNCTION(thdReadSensorsLR, arg) {
+	chMtxLock(&mutexSensors);
+	// Allo startup leggo tutti isensori
+	robot.readAllSensors();	//IR proxy, Gyro, GPS
+	chMtxUnlock(&mutexSensors);
+
+	while (1)
+	{
+		dbg("1,S LR>;")
+  		digitalWriteFast(Pin_LED_TOP_R, robot.status.tictac);//LEDTOP_R_ON
+
+		chMtxLock(&mutexSensors);
+		robot.readSensorsLR();	//IR proxy, Gyro, GPS
+		robot.status.tictac = !robot.status.tictac;
+		chMtxUnlock(&mutexSensors);
+		//LEDTOP_R_OFF
+
+
+		//yeld in base alla modalità operativa
+		if (robot.status.operatingMode == MODE_AUTONOMOUS) {
+			chThdSleepMilliseconds(3000);// Sleep for n milliseconds.
+		}
+		else {
+			chThdSleepMilliseconds(5000);
 		} 
 
 
@@ -303,6 +339,8 @@ static THD_FUNCTION(thdMMIcommands, arg) {
 
 	while (true)
 	{
+		dbg("1;MMI>; ");
+
 		LEDTOP_B_ON
 
 		osalSysDisable(); //disabilita Interupt
@@ -327,13 +365,12 @@ static THD_FUNCTION(thdPCcommands, arg) {
 	// Setup CommandMessenger -----------------------------------------------------
 	cmdPC.printLfCr();   // Adds newline to every command 
 	attachCommandCallbacks(&cmdPC);// Attach my application's user-defined callback methods
-	dbg("thdPCcommands STARTED");
+	dbg("1,thdPCcommands STARTED;");
 
 	while (true)
 	{
-		dbg("thdPCcommands: ");
+		dbg("1;PC>; ");
 
-		LEDTOP_G_ON
 
 		//osalSysDisable(); //disabilita Interupt
 //		chMtxLock(&mutexSerialPC);
@@ -341,7 +378,6 @@ static THD_FUNCTION(thdPCcommands, arg) {
 //		chMtxUnlock(&mutexSerialPC);
 		//osalSysEnable();//abilita Interupt
 
-		LEDTOP_G_OFF
 
 		//yeld in base alla modalità operativa
 		if (robot.status.operatingMode == MODE_SLAVE) {
@@ -365,7 +401,7 @@ static THD_FUNCTION(thdSendStatusHR, arg) {
 
 	while (true)
 	{
-		dbg("1,thdSendStatusHR;")
+
 
 		LEDTOP_G_ON
 		//osalSysDisable(); //disabilita Interupt
@@ -420,7 +456,7 @@ static THD_FUNCTION(thdSendStatusLR, arg) {
 
 	while (true)
 	{
-		dbg("1,thdSendStatusLR;")
+
 
 //		chMtxLock(&mutexSerialMMI); //si blocca finchè la seriale è in uso da un altro thread
 		OnCmdGetSensorsLRate(&cmdMMI);
@@ -530,16 +566,17 @@ uint16_t getFreeSram() {
 
 void chSetup() {
 	// fill pool with msgObjArray array
-	for (size_t i = 0; i < MBOX_COUNT; i++) {
-		chPoolFree(&memPool, &msgObjArray[i]);
-	}
+	//for (size_t i = 0; i < MBOX_COUNT; i++) {
+	//	chPoolFree(&memPool, &msgObjArray[i]);
+	//}
 
+	chThdCreateStatic(waSendStatusHR, sizeof(waSendStatusHR), NORMALPRIO +5, thdSendStatusHR, NULL);
 	chThdCreateStatic(waSendStatusLR, sizeof(waSendStatusLR), NORMALPRIO +5, thdSendStatusLR, NULL);
 	chThdCreateStatic(waPCcommands, sizeof(waPCcommands), NORMALPRIO + 3, thdPCcommands, NULL);
 	chThdCreateStatic(waMMIcommands, sizeof(waMMIcommands), NORMALPRIO + 3, thdMMIcommands, NULL);
-//	chThdCreateStatic(waReadSensorsHR, sizeof(waReadSensorsHR), NORMALPRIO + 2, thdReadSensorsHR, NULL);
+	chThdCreateStatic(waReadSensorsHR, sizeof(waReadSensorsHR), NORMALPRIO + 2, thdReadSensorsHR, NULL);
+	chThdCreateStatic(waReadSensorsLR, sizeof(waReadSensorsLR), NORMALPRIO + 2, thdReadSensorsLR, NULL);
 	//chThdCreateStatic(waScan, sizeof(waScan), NORMALPRIO + 2, thdScan, NULL);
-	chThdCreateStatic(waSendStatusHR, sizeof(waSendStatusHR), NORMALPRIO , thdSendStatusHR, NULL);
 	//chThdCreateStatic(waFlashLed, sizeof(waFlashLed), NORMALPRIO + 2, FlashLed, NULL);
 	//	chThdCreateStatic(waThreadMonitor, sizeof(waThreadMonitor), NORMALPRIO + 1, ThreadMonitor, NULL);
 	//	chThdCreateStatic(waThreadROS, sizeof(waThreadROS), NORMALPRIO + 3, ThreadROS, NULL);//-Esplora
@@ -562,10 +599,56 @@ void setup()
 
 	SERIAL_MSG.println(F("1, ROBOTCORE BEGIN...;"));
 	// inizializzazione ROBOT ---------------------
-	//dbg2("Servosonar addr:", (int)&servoSonar)
-	//dbg2("Sonar  addr:", (int)&Sonar)
-	//dbg2("LDS addr:", (int)&LDS)
-	//dbg2("compass addr:", (int)&compass)
+#pragma region I2C Scanner
+#if 0
+
+
+	byte error, address;
+	int nDevices;
+
+	Serial.println("Scanning...");
+
+	nDevices = 0;
+	for (address = 1; address < 127; address++)
+	{
+		// The i2c_scanner uses the return value of
+		// the Write.endTransmisstion to see if
+		// a device did acknowledge to the address.
+		error = I2c.write(address, 0);
+
+
+		if (error == 0)
+		{
+			Serial.print("I2C device found at address 0x");
+			if (address < 16)
+				Serial.print("0");
+			Serial.print(address, HEX);
+			Serial.println("  !");
+
+			nDevices++;
+		}
+		else if (error == 4)
+		{
+			Serial.print("Unknow error at address 0x");
+			if (address < 16)
+				Serial.print("0");
+			Serial.println(address, HEX);
+		}
+	}
+	if (nDevices == 0)
+		Serial.println("No I2C devices found\n");
+	else
+		Serial.println("done\n");
+
+	delay(5000);           // wait 5 seconds for next scan
+
+#endif // 0
+#pragma endregion
+
+	dbg2("LDS addr:", (int)&LDS)
+	dbg2("Sonar  addr:", (int)&Sonar)
+	dbg2("Servosonar addr:", (int)&servoSonar)
+	dbg2("compass addr:", (int)&compass)
  
 	robot.beginRobot(&Gps , &servoSonar, &Sonar, &LDS, &compass);
 
