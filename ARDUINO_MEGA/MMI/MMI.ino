@@ -121,6 +121,8 @@
 		//UTFT     tft(ILI9327_8,30,31,32,33 );		//was 38, 39, 40, 41
 		UTFT     tft(ILI9327_8, Pin_TFT_RS, Pin_TFT_WR, Pin_TFT_CS, Pin_TFT_RST);		//was 38, 39, 40, 41
 		TS_Point p;
+		MUTEX_DECL(mutexTFT);// accesso al display TFT
+
 	#pragma endregion
 
 	#pragma region robotModel
@@ -189,6 +191,7 @@
 			MENU(subMenuMove, "Move.."
 				,FIELD(robotModel.cmdSettingDefaultMoveCm, "set FW/BK x", " cm", 0, 500, 10, 1)
 				,FIELD(robotModel.cmdSettingDefaultRotateDeg, "set L/R x", " deg", 0, 360, 30, 1)
+				,FIELD(robotModel.status.cmd.clock, "CK speed", " uS", 2500, 4000, 500, 100)
 				,OP("Forward", mfMoveFW)
 				,OP("Back", mfMoveBK)
  				,OP("Right", mfRotateR)
@@ -231,37 +234,37 @@
 				return true;
 			}
 			bool mfSetModeAutonomous() {
-				robotModel.SetMode(MODE_AUTONOMOUS);
+				robotModel.cmdSetMode(MODE_AUTONOMOUS);
 				playSingleNote(NOTE_A7, 80);
 				myMenu.redraw();
 				return true;
 			}
 			bool mfSetModeSlave() {
-				robotModel.SetMode(MODE_SLAVE);
+				robotModel.cmdSetMode(MODE_SLAVE);
 				playSingleNote(NOTE_D7, 80);
 				myMenu.redraw();
 				return true;
 			}
 			bool mfMoveFW() {
-				robotModel.moveCm( robotModel.cmdSettingDefaultMoveCm );
+				robotModel.cmdMoveCm( robotModel.cmdSettingDefaultMoveCm );
 				playSingleNote(NOTE_D7, 80);
 				myMenu.redraw();
 				return true;
 			}
 			bool mfMoveBK() {
-				robotModel.moveCm( -robotModel.cmdSettingDefaultMoveCm);
+				robotModel.cmdMoveCm( -robotModel.cmdSettingDefaultMoveCm);
 				playSingleNote(NOTE_D7, 80);
 				myMenu.redraw();
 				return true;
 			}
 			bool mfRotateR() {
-				robotModel.rotateDeg(robotModel.cmdSettingDefaultRotateDeg);
+				robotModel.cmdRotateDeg(robotModel.cmdSettingDefaultRotateDeg);
 				playSingleNote(NOTE_D7, 80);
 				myMenu.redraw();
 				return true;
 			}
 			bool mfRotateL() {
-				robotModel.rotateDeg( -robotModel.cmdSettingDefaultRotateDeg);
+				robotModel.cmdRotateDeg( -robotModel.cmdSettingDefaultRotateDeg);
 				playSingleNote(NOTE_D7, 80);
 				myMenu.redraw();
 				return true;
@@ -273,12 +276,12 @@
 
 			}
 			bool mfGetSensorsHR() {
-				robotModel.GetSensorsHR();
+				robotModel.cmdGetSensorsHR();
 				myMenu.redraw();
 				return true;
 			}
 			bool mfGetSensorsLR() {
-				robotModel.GetSensorsLR();
+				robotModel.cmdGetSensorsLR();
 				myMenu.redraw();
 				return true;
 			}
@@ -778,7 +781,7 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 
 						//todo: esegue comando di stop
 
-						cmdRobotCore.sendCmdStart(CmdRobotStopMoving);
+						cmdRobotCore.sendCmdStart(CmdRobotStop);
 
 						cmdProcessingStatus = CMDPROCESSING_INITIAL_STATUS; // torna in IDLE
 						SPEAK("OKEY STOP");
@@ -1039,10 +1042,12 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 	//  THREAD  R O T A R Y  E N C O D E R       ///////////////////////////////////////////////////////////
 	/// ///////////////////////////////////////////////////////////////////////////////
 	#pragma region  Processo GESTIONE MENU CON ROTARY ENCODER  
-		static THD_WORKING_AREA(waRotaryEncoder, 164);
-		static THD_FUNCTION(RotaryEncoder, arg) {
+		static THD_WORKING_AREA(waMenu, 164);
+		static THD_FUNCTION(thdMenu, arg) {
 			while (1) {
+				chMtxLock(&mutexTFT);
 				mainMenu.poll(myMenu, in);
+				chMtxUnlock(&mutexTFT);
 				chThdSleepMilliseconds(400);//	chThdYield();//	
 			}
 		}
@@ -1280,13 +1285,14 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 			unsigned long t2;
 			struct myMsgStruct  myTftMsg ;
 
-			tft.clrScr();
+			TFTCLEAR;
 			tftPrintCaptions();
-			//drawButtons();
-			while (true)// loop di visualizzazione dati dai 38 ai 50ms (in base alla lunghezza dei gauge)
+ 			while (true)// loop di visualizzazione dati dai 38 ai 50ms (in base alla lunghezza dei gauge)
 			{
 				dbg("T>")
 				t1 = millis();
+				chMtxLock(&mutexTFT);
+
 				// imposta i colori di default
 				tft.setBackColor(VGA_BLACK);
 				tft.setColor(VGA_WHITE);
@@ -1323,6 +1329,9 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 					break;
 				}
  				TFTprintAtStr(0, TFTROW(0), strTmp);
+				// non FUNZIONA COSI' !!!
+				//tft.setColor(VGA_RED);
+ 				//TFTprintAtStr(0, TFTROW(0), robotModel.getOperatingModeChar());
   
 
 
@@ -1333,14 +1342,15 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 				TFTprintAtNumI(TFTDATACOL, TFTROW(r++), getFreeSram(), VGA_GRAY);
 
 				/// Visualizza posizione---------------------------------------------------
-				TFTprintAtNumF(TFTDATACOL, TFTROW(r), robotModel.status.posCurrent.x,2  , VGA_BLUE);
-				TFTprintAtNumF(TFTDATACOL + 70, TFTROW(r), robotModel.status.posCurrent.y, 2,  VGA_BLUE);
-				TFTprintAtNumF(TFTDATACOL + 150, TFTROW(r++), robotModel.status.posCurrent.r, 2,VGA_BLUE);
+ 
+				TFTprintAtNumF(TFTDATACOL, TFTROW(r), robotModel.status.posCurrent.x,2  , VGA_WHITE);
+				TFTprintAtNumF(TFTDATACOL + 70, TFTROW(r), robotModel.status.posCurrent.y, 2, VGA_WHITE);
+				TFTprintAtNumF(TFTDATACOL + 150, TFTROW(r++), robotModel.status.posCurrent.r, 2, VGA_WHITE);
 
 				/// Visualizza dati GPS---------------------------------------------------
-				TFTprintAtNumI(TFTDATACOL, TFTROW(r), robotModel.status.sensors.gps.sats, VGA_BLUE);
-				TFTprintAtNumF(TFTDATACOL + 50, TFTROW(r), robotModel.status.sensors.gps.lat, 2,  VGA_BLUE);
-				TFTprintAtNumF(TFTDATACOL + 150, TFTROW(r++), robotModel.status.sensors.gps.lng, 2,  VGA_BLUE);
+				TFTprintAtNumI(TFTDATACOL, TFTROW(r), robotModel.status.sensors.gps.sats, VGA_WHITE);
+				TFTprintAtNumF(TFTDATACOL + 50, TFTROW(r), robotModel.status.sensors.gps.lat, 2, VGA_WHITE);
+				TFTprintAtNumF(TFTDATACOL + 150, TFTROW(r++), robotModel.status.sensors.gps.lng, 2, VGA_WHITE);
 
 
 				// Ingressi Analogici ----------------------------------------------------
@@ -1357,6 +1367,11 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 				// MOTION DETECTION
 				drawLedRect(TFTDATACOL, TFTROW(r++), robotModel.status.sensors.pirDome, VGA_RED);
 
+				// IR SENSORS DETECTION
+				
+				drawLedRect(TFTDATACOL, TFTROW(r++), robotModel.status.sensors.irproxy.fw, VGA_RED);
+				drawLedRect(TFTDATACOL + 10, TFTROW(r++), robotModel.status.sensors.irproxy.fl, VGA_RED);
+				drawLedRect(TFTDATACOL + 20, TFTROW(r++), robotModel.status.sensors.irproxy.fr, VGA_RED);
 
 				#pragma region VISUALIZZA I MESSAGGI IN INGRESSO
 				TFTprintAtNumI(TFTDATACOL , TFTROW(r++), myRingBufTftMsg->elements, VGA_RED);
@@ -1415,6 +1430,7 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 
 				//millisecondi impiegati dal loop sulla prima riga
 				TFTprintAtNumI(TFTDATACOL+100, TFTCAPTION_STARTINGROW, t2-t1, VGA_GRAY);
+				chMtxUnlock(&mutexTFT);
 
 				chThdSleepMilliseconds(1000);//chThdYield();
 				
@@ -1446,21 +1462,21 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 			{
 			case 'F': //FORWARD
 				SPEAK("OKEI AVANTI");
-				robotModel.moveCm(robotModel.cmdSettingDefaultMoveCm);
+				robotModel.cmdMoveCm(robotModel.cmdSettingDefaultMoveCm);
 				break;
 			case 'B'://BACK
 				SPEAK("OKEI INDIETRO");
-				robotModel.moveCm(-robotModel.cmdSettingDefaultMoveCm);
+				robotModel.cmdMoveCm(-robotModel.cmdSettingDefaultMoveCm);
 
 				break;
 			case 'R'://RIGHT
 				SPEAK("OKEI DESTRA");
-				robotModel.rotateDeg(robotModel.cmdSettingDefaultRotateDeg);
+				robotModel.cmdRotateDeg(robotModel.cmdSettingDefaultRotateDeg);
 
 				break;
 			case 'L'://LEFT
 				SPEAK("OKEI SINSTRA");
-				robotModel.rotateDeg(-robotModel.cmdSettingDefaultRotateDeg);
+				robotModel.cmdRotateDeg(-robotModel.cmdSettingDefaultRotateDeg);
 				break;
 			case 'W'://Webcam On
 				SPEAK("uebcam On");
@@ -1469,6 +1485,25 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 			case 'w'://Webcam Off
 				SPEAK("uebcam spenta");
 
+				break;
+				// Comandi di movimento no limitato
+			case 'f': //FORWARD
+				SPEAK("OKEI AVANTI");
+				robotModel.cmdGo(commandDir_e::GOF,robotModel.status.cmd.clock);
+				break;
+			case 'b'://BACK
+				SPEAK("OKEI INDIETRO");
+				robotModel.cmdGo(commandDir_e::GOB, robotModel.status.cmd.clock);
+
+				break;
+			case 'r'://RIGHT
+				SPEAK("OKEI DESTRA");
+				robotModel.cmdGo(commandDir_e::GOR, robotModel.status.cmd.clock);
+
+				break;
+			case 'l'://LEFT
+				SPEAK("OKEI SINSTRA");
+				robotModel.cmdGo(commandDir_e::GOL, robotModel.status.cmd.clock);
 				break;
 
 			default:
@@ -1668,37 +1703,7 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 #endif // 0
 #pragma endregion 
 
-	#pragma region // BLINK LED
-	#if 0
-	#define PIN_LED  13
-
-		// ///////////////////////////////////////////////////////////////////////////////
-		//  blinking LED       ///////////////////////////////////////////////////////////
-		// ///////////////////////////////////////////////////////////////////////////////
-
-		// 64 byte stack beyond task switch and interrupt needs
-		static THD_WORKING_AREA(waFlashLed, 64);
-		static THD_FUNCTION(thdFlashLed, arg) {
-			// Flash led every 200 ms.
-			pinMode(PIN_LED, OUTPUT);		digitalWrite(PIN_LED, 0);	// led superiore
-
-			while (1) {
-				// Turn LED on.
-				digitalWriteFast(PIN_LED, HIGH);
-				// Sleep for 50 milliseconds.
-				chThdSleepMilliseconds(40);
-
-				// Turn LED off.
-				digitalWriteFast(PIN_LED, LOW);
-
-				// Sleep for 150 milliseconds.
-				chThdSleepMilliseconds(960);
-			}
-		}
-
-	#endif // 0
-	#pragma endregion // BLINK LED----------------------------------------------------
-#if 1
+ #if 1
 
  
 
@@ -1710,11 +1715,12 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 	/// //////////////////////////////////////////////////////////////////////////////
 	#pragma region // BLINK LED
 	#if 0
+
 	#define PIN_LED  Pin_ONBOARD_LED
 
 	// 64 byte stack beyond task switch and interrupt needs
-		static THD_WORKING_AREA(waFlashLed, 64);
-		static THD_FUNCTION(FlashLed, arg) {
+		static THD_WORKING_AREA(waFlashLedTFT, 64);
+		static THD_FUNCTION(thdFlashLedTFT, arg) {
 			// Flash led every 200 ms.
 			pinMode(PIN_LED, OUTPUT);		digitalWrite(PIN_LED, 0);	// led superiore
 
@@ -1850,7 +1856,7 @@ void thd_Setup() {
 
 	chThdCreateStatic(waRobotCoreInterface, sizeof(waRobotCoreInterface), NORMALPRIO + 5, thdRobotCoreInterface, NULL);
 	chThdCreateStatic(waBT, sizeof(waBT), NORMALPRIO + 4, thdBT, NULL);
- 	chThdCreateStatic(waRotaryEncoder, sizeof(waRotaryEncoder), NORMALPRIO + 3, RotaryEncoder, NULL);
+ 	chThdCreateStatic(waMenu, sizeof(waMenu), NORMALPRIO + 3, thdMenu, NULL);
 	chThdCreateStatic(waTFT, sizeof(waTFT), NORMALPRIO +2, thdTFT, NULL);
 	//chThdCreateStatic(waComandiVocali, sizeof(waComandiVocali), NORMALPRIO + 2, thdComandiVocali, NULL);
 	chThdCreateStatic(waFifoToSpeech, sizeof(waFifoToSpeech), NORMALPRIO + 2, thdFifoToSpeech, NULL);
@@ -1891,7 +1897,7 @@ void setup()
 	#pragma endregion
 
 	robotModel.begin(MODE_SLAVE, &cmdRobotCore);
-
+	
 	#pragma region Inizializzazione TFT
 		#ifdef TFT_ili9488
 			// Declare which fonts we will be using
@@ -1946,9 +1952,9 @@ void setup()
 
 		#endif
 
- 		tft.setBackColor(255, 0, 0);
-		TFTprintAtStr(TFTDATACOL, TFTROW(10), (char*)robotModel.getOperatingModeChar());
-		tft.setBackColor(0, 255, 255);
+ 		//tft.setBackColor(255, 0, 0);
+		//TFTprintAtStr(TFTDATACOL, TFTROW(10), (char*)robotModel.getOperatingModeChar());
+
 		tft.setBackColor(0, 0, 0);
 
 

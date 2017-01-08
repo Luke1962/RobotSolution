@@ -35,7 +35,11 @@ struct myMsgStruct
 // Create a RinBuf object designed to hold  10 of mystructs
 RingBuf *myRingBufTftMsg = RingBuf_new(sizeof(struct myMsgStruct), MAX_BUFFER_SIZE_TFTMSG);
 
-
+// usati da TFT_PRINT_MSG --------------------
+#define MSG_STARTINGROW 12 //riga iniziale dell'area messaggi
+#define MSG_ROWS 4			// righe dedicate ai messaggi
+static int msgRowCnt = MSG_STARTINGROW; //contatore
+//----------------------------------------
 
 #pragma endregion
 
@@ -100,6 +104,8 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 
 	void OnCmdReboot(CmdMessenger2 *cmd){
 		//reset software
+		SPEAK_OK
+			SPEAK("MI RIAVVIO");
 		cmdMsg(cmd, "Riavvio..." );
 		reboot();
 	//	software_Reboot();
@@ -110,39 +116,20 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 	/// Modalità operativa : MODE_SLAVE , JOYSTICK , AUTONOMOUS
 	//////////////////////////////////////////////////////////////////////////
 	void OnCmdRobotSetMode(CmdMessenger2 *cmd) {
-		//if (robotModel.status.operatingMode == MODE_SLAVE) { SPEAK_OK }
+		if (robotModel.status.operatingMode != robotModel.statusOld.operatingMode) { SPEAK_OK }
 
-		//robotModel.SetMode((operatingMode_e)cmd->readInt16Arg());
-	 //
-		//switch (robotModel.status.operatingMode)
-		//{
-		//	case MODE_SLAVE:
-		//		cmd->sendCmd( CmdRobotSetMode, MODE_SLAVE );
-		//		SPEAK_SLAVE
-		//		cmdMsg(cmd,"SetMode MODE_SLAVE");
-		//		break;
-		//	case JOYSTICK:
-		//		cmd->sendCmd( CmdRobotSetMode, JOYSTICK );
-		//		 
-		//		cmdMsg(cmd, "SetMode JOYSTICK");
-		//		break;
-		//	case AUTONOMOUS:
-		//		cmd->sendCmd( CmdRobotSetMode, AUTONOMOUS );
-		//		 SPEAK_AUTONOMO
-		//		cmdMsg(cmd, "SetMode AUTONOMOUS" );
-		//		break;	
-	 //	
-		//	default:
-		//		cmd->sendCmd(Msg,"Unrecognised Mode");			 
-		//		break;
-		//}
+		robotModel.cmdSetMode((operatingMode_e)cmd->readInt16Arg());
+
+
 	}
 	void OnUnknownCommand(CmdMessenger2 *cmd)
 	{
 		int cmdId = (int)cmd->commandID();
 
 		playSingleNote(100, 100);
-		TFT_PRINT_MSG(cmd->streamBuffer);
+		TFT_PRINT_MSG(msgRowCnt, cmd->streamBuffer);
+		msgRowCnt++; if (msgRowCnt > (MSG_STARTINGROW + MSG_ROWS-1)) { msgRowCnt = MSG_STARTINGROW; }
+
 		dbg(cmd->streamBuffer)
 		cmd->reset();
 
@@ -171,7 +158,7 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 
 		//per eseguire lo spostamento devo segnalare al processo robotCore
 		// di inviare il comando
-		cmPercorsi=robotModel.moveCm(dist);
+		cmPercorsi=robotModel.cmdMoveCm(dist);
 
 		// riporto la distanza percorsa-----------
 		if(dist>0){
@@ -202,7 +189,7 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 		int DegPercorsi = 0;
 
 		// invia al robot il comando 
-		DegPercorsi = robotModel.rotateDeg(deg);
+		DegPercorsi = robotModel.cmdRotateDeg(deg);
 
 
 		// Messaggio step percorsi-----------------
@@ -303,16 +290,20 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 	}
 	void OnCmdSetLaser(CmdMessenger2 *cmd)
 	{
-		//if (robotModel.status.operatingMode == MODE_SLAVE) { SPEAK_OK }
+		if (robotModel.status.operatingMode == MODE_SLAVE) { SPEAK_OK }
+		bool blOn = cmd->readBoolArg();		//numero del rele da attivare/disattivare
 
-		//int16_t onoff = cmd->readInt16Arg();		//numero del rele da attivare/disattivare
-		//digitalWriteFast( Pin_LaserOn, onoff );
-		//cmdMsg(cmd, "Ack CmdSetLaser :", onoff);
+		if (blOn)
+		{
+			SPEAK("LASER ON");
 
-		//// rimanda il medesimo comando indietro come ack
-		//cmd->sendCmdStart( CmdSetLaser);
-		//cmd->sendCmdArg( digitalReadFast(Pin_LaserOn ));
-		//cmd->sendCmdEnd();
+		}
+		else
+		{
+			SPEAK("LASER OFF");
+
+		}
+		robotModel.cmdSetLaser(blOn);
 	}
 	void OnCmdSetPort(CmdMessenger2 *cmd)
 	{
@@ -420,39 +411,16 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 	//////////////////////////////////////////////////////////////////////////
 	/// si muove alla  direzione e  velocità impostata
 	//////////////////////////////////////////////////////////////////////////
-	void OnCmdRobotStartMoving(CmdMessenger2 *cmd)
+	void OnCmdRobotGo(CmdMessenger2 *cmd)
 	{
-		//robotModel.status.cmd.commandDir = (commandDir_e)cmd->readInt16Arg();		//direzione (enum commandDir_t {STOP, GOFW, GOBK, GOCW, GOCCW};)
-		//int motorCK= cmd->readInt16Arg();
-		////String s = "Mov ck" +  robotModel.status.cmd.commandDir;
-		//Serial.print( "1,Mov ck" ); Serial.print( motorCK ); Serial.print( ";" );
+		robotModel.status.cmd.commandDir = (commandDir_e)cmd->readInt16Arg();		//direzione (enum commandDir_t {STOP, GOFW, GOBK, GOCW, GOCCW};)
+		int motorCK= cmd->readInt16Arg();
 
-		//
-		//switch (robotModel.status.cmd.commandDir)
-		//{
-		//	case GOF:
-		//		robotModel.goFW(motorCK);
-		//		cmdMsg(cmd,"goFW");
-		//		break;
-		//	case GOB:
-		//		robotModel.goBK(motorCK);
-		//		cmdMsg(cmd,"goBK" );
-		//		break;
-		//	case GOR:
-		//		robotModel.goCW(motorCK);
-		//		cmdMsg(cmd, "goCW" );
-		//		break;	
-		//	case GOL:
-		//		robotModel.goCCW(motorCK);
-		//		cmdMsg(cmd,"goCCW" );
-		//		break;		
-		//	default:
-		//		cmdMsg(cmd, "Error on direction" );
-		//		break;
-		//}
+		robotModel.cmdGo(robotModel.status.cmd.commandDir, motorCK);
+		
 	}
-	void OnCmdRobotStopMoving(CmdMessenger2 *cmd) {
-		//robotModel.cmdMotionStop()
+	void OnCmdRobotStop(CmdMessenger2 *cmd) {
+		robotModel.cmdStop();
 
 	}
 
@@ -627,60 +595,64 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 		dbg("OnCmdSpeech...");
 		dbg(strSpeech)
 		SPEAK(strSpeech);
-		TFT_PRINT_MSG(strSpeech);
+		TFT_PRINT_MSG(msgRowCnt, strSpeech);
+		msgRowCnt++; if (msgRowCnt > (MSG_STARTINGROW + MSG_ROWS-1)) { msgRowCnt = MSG_STARTINGROW; }
 
 	}
 	// su ricezione di una stringa messaggio, la mette nel buffer
 	void	OnMsg(CmdMessenger2 *cmd) {
+		static int msgRowCnt= MSG_STARTINGROW;
 		// lettura stringa dalla seriale
 		char *msgIn = cmd->readStringArg();
-		dbg("**MSG**")
-		TFT_PRINT_MSG( msgIn);
-#if 0
+		//dbg("**MSG**")
+		TFT_PRINT_MSG(msgRowCnt, msgIn);
+		msgRowCnt++; if (msgRowCnt > (MSG_STARTINGROW + MSG_ROWS-1)) { msgRowCnt = MSG_STARTINGROW; }
 
-		// send message
-		dbg(msgIn);
-		playSingleNote(NOTE_A7, 80);
+		#if 0
 
-		/// metto la stringa  in coda nella FiFO TFTMSG
+				// send message
+				dbg(msgIn);
+				playSingleNote(NOTE_A7, 80);
 
-		// Create element I want to add
-		struct myMsgStruct msgOutTftMsg;
-		// alloca la memoria per msgOutTftMsg 
-		memset(&msgOutTftMsg, 0, sizeof(struct myMsgStruct));
+				/// metto la stringa  in coda nella FiFO TFTMSG
 
-		if (!myRingBufTftMsg->isFull(myRingBufTftMsg))
-		{
-			// metto il messaggio in ring_buf----------
-			// così non funziona!! -> strcpy(tmpBuff, msgOutVoice.msgString);
-			for (size_t i = 0; i < sizeof(msgIn); i++)
-			{
-				msgOutTftMsg.msgString[i] = msgIn[i];
-			}
-			msgOutTftMsg.index = myRingBufTftMsg->elements;
-			msgOutTftMsg.timestamp = millis();
-			//-----------------------------------------
+				// Create element I want to add
+				struct myMsgStruct msgOutTftMsg;
+				// alloca la memoria per msgOutTftMsg 
+				memset(&msgOutTftMsg, 0, sizeof(struct myMsgStruct));
 
-
-			myRingBufTftMsg->add(myRingBufTftMsg, &msgOutTftMsg);
-			//-----------------------------------------
-
-			dbg2("msgOutTftMsg out :", msgOutTftMsg.msgString)
-				dbg2("myRingBufTftMsg->elem:", myRingBufTftMsg->elements)
-
-				chThdSleepMilliseconds(500);//	chThdYield();
-
-		}
-		else //full
-		{
-			dbg2("FULL myRingBufTftMsg->elem:", myRingBufTftMsg->elements)
-				dbg2("........FreeSram", getFreeSram())
-				//attendo più a lungo per permettere di svuotare il buffer
-				chThdSleepMilliseconds(4000);//	chThdYield();
-		}
+				if (!myRingBufTftMsg->isFull(myRingBufTftMsg))
+				{
+					// metto il messaggio in ring_buf----------
+					// così non funziona!! -> strcpy(tmpBuff, msgOutVoice.msgString);
+					for (size_t i = 0; i < sizeof(msgIn); i++)
+					{
+						msgOutTftMsg.msgString[i] = msgIn[i];
+					}
+					msgOutTftMsg.index = myRingBufTftMsg->elements;
+					msgOutTftMsg.timestamp = millis();
+					//-----------------------------------------
 
 
-#endif // 0
+					myRingBufTftMsg->add(myRingBufTftMsg, &msgOutTftMsg);
+					//-----------------------------------------
+
+					dbg2("msgOutTftMsg out :", msgOutTftMsg.msgString)
+						dbg2("myRingBufTftMsg->elem:", myRingBufTftMsg->elements)
+
+						chThdSleepMilliseconds(500);//	chThdYield();
+
+				}
+				else //full
+				{
+					dbg2("FULL myRingBufTftMsg->elem:", myRingBufTftMsg->elements)
+						dbg2("........FreeSram", getFreeSram())
+						//attendo più a lungo per permettere di svuotare il buffer
+						chThdSleepMilliseconds(4000);//	chThdYield();
+				}
+
+
+		#endif // 0
 
 	}
 
@@ -697,10 +669,10 @@ void attachCommandCallbacks(CmdMessenger2 *cmd)		//va messa in fondo
 		cmd->attach(OnUnknownCommand);
 		cmd->attach(Msg, OnMsg);
 		//cmd->attach(CmdRobotHello, OnCmdRobotHello);
-		//cmd->attach(CmdReboot, OnCmdReboot);
+		cmd->attach(CmdReboot, OnCmdReboot);
 
-		cmd->attach(CmdRobotStartMoving, OnCmdRobotStartMoving);
-		cmd->attach(CmdRobotStopMoving, OnCmdRobotStopMoving);
+		cmd->attach(CmdRobotStartMoving, OnCmdRobotGo);
+		cmd->attach(CmdRobotStop, OnCmdRobotStop);
 
 		cmd->attach(CmdRobotMoveCm, OnCmdRobotMoveCm);
 		cmd->attach(CmdRobotRotateDeg, OnCmdRobotRotateDeg);
@@ -708,7 +680,7 @@ void attachCommandCallbacks(CmdMessenger2 *cmd)		//va messa in fondo
 
 		//cmd->attach(CmdRobotRele, OnCmdRobotRele);
 		//cmd->attach(CmdSetLed, OnCmdSetLed);
-		//cmd->attach(CmdSetLaser, OnCmdSetLaser);
+		cmd->attach(CmdSetLaser, OnCmdSetLaser);
 		//cmd->attach(CmdSetPort, OnCmdSetPort);
 
 		cmd->attach(kbGetSensorsHRate, OnkbGetSensorsHRate);
