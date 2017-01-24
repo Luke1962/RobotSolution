@@ -37,7 +37,7 @@ RingBuf *myRingBufTftMsg = RingBuf_new(sizeof(struct myMsgStruct), MAX_BUFFER_SI
 
 // usati da TFT_PRINT_MSG --------------------
 #define MSG_STARTINGROW 12 //riga iniziale dell'area messaggi
-#define MSG_ROWS 4			// righe dedicate ai messaggi
+#define MSG_ROWS 8			// righe dedicate ai messaggi
 static int msgRowCnt = MSG_STARTINGROW; //contatore
 //----------------------------------------
 
@@ -116,12 +116,10 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 	/// Modalità operativa : MODE_SLAVE , JOYSTICK , AUTONOMOUS
 	//////////////////////////////////////////////////////////////////////////
 	void OnCmdRobotSetMode(CmdMessenger2 *cmd) {
-		if (robotModel.status.operatingMode != robotModel.statusOld.operatingMode) { SPEAK_OK }
-
+		SPEAK_OK 
 		robotModel.cmdSetMode((operatingMode_e)cmd->readInt16Arg());
-
-
 	}
+
 	void OnUnknownCommand(CmdMessenger2 *cmd)
 	{
 		int cmdId = (int)cmd->commandID();
@@ -457,7 +455,7 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 
 
 		//-------------------------------------------
-		// invia i dati SONAR man mano che si sposta
+		// invia a HOST i dati SONAR man mano che si sposta
 		//-------------------------------------------
 		void OnCmdSonarScanSync(CmdMessenger2 *cmd)
 		{
@@ -504,6 +502,8 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 
 	void OnkbGetSensorsHRate(CmdMessenger2 *cmd)  //attenzione al limite dei 9600baud
 	{
+		tone(Pin_Buzzer, 3500, 30);//bip  che segnala la ricezione di del messaggio sulla seriale
+
 		robotModel.statusOld = robotModel.status;  // save current status
 		robotModel.status.ts = (unsigned long)cmd->readInt16Arg(); // (unsigned long)millis();
 
@@ -531,11 +531,8 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 		robotModel.status.sensors.switchTop = cmd->readBoolArg();
 		robotModel.status.act.laserOn = cmd->readBoolArg();
 
-		//robotModel.status.sensors.batCharge = cmd->readInt16Arg();
+		robotModel.raiseEvents();
 
-		//robotModel.status.sensors.gps.sats = cmd->readInt16Arg();
-		//robotModel.status.sensors.gps.lat = cmd->readFloatArg();
-		//robotModel.status.sensors.gps.lng = cmd->readFloatArg();
 
 
 
@@ -543,6 +540,7 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 
 	void OnkbGetSensorsLRate(CmdMessenger2 *cmd)  //attenzione al limite dei 9600baud
 	{
+		tone(Pin_Buzzer, 3000, 40);//bip  che segnala la ricezione di del messaggio sulla seriale
 		robotModel.status.sensors.batCharge = cmd->readInt16Arg();
 		robotModel.status.sensors.switchTop = cmd->readBoolArg();
 
@@ -551,15 +549,19 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 		robotModel.status.sensors.gps.sats = cmd->readInt16Arg();
 
 		robotModel.status.operatingMode =  (operatingMode_e)cmd->readInt16Arg();
+		robotModel.raiseEvents();
 
 	}
 	void OnkbMovedCm(CmdMessenger2 *cmd)  
 	{
-		robotModel.updatePose(cmd->readDoubleArg(),0);
+		//robotModel.updatePose(cmd->readDoubleArg(),0);
+		robotModel.updatePose(cmd->readInt16Arg()/10,0);
+		robotModel.raiseEvents();
 	}
 	void OnkbRotatedDeg(CmdMessenger2 *cmd)  
 	{
 		robotModel.updatePose(0,cmd->readInt16Arg());
+		robotModel.raiseEvents();
 	}
 	void OnkbGetPose(CmdMessenger2 *cmd)  //attenzione al limite dei 9600baud
 	{
@@ -570,17 +572,17 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 		robotModel.status.posCurrent.x = cmd->readDoubleArg();
 		robotModel.status.posCurrent.y = cmd->readDoubleArg();
 		robotModel.status.posCurrent.r = cmd->readDoubleArg();
+		robotModel.raiseEvents();
 
 	}
 
 	//////////////////////////////////////////////////////////////
-	///		riceve i dati del sonar da RobotCore
+	//		riceve una singola coppia di dati alfa, distance
 	/////////////////////////////////////////////////////////////
 	void OnkbSonarSendData(CmdMessenger2 *cmd) {
 
 		int alfa = cmd->readInt16Arg();
 		robotModel.status.sensors.sonarEchos[alfa] = cmd->readInt16Arg();
-
 	}
 
 
@@ -605,8 +607,10 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 		// lettura stringa dalla seriale
 		char *msgIn = cmd->readStringArg();
 		//dbg("**MSG**")
-		TFT_PRINT_MSG(msgRowCnt, msgIn);
-		msgRowCnt++; if (msgRowCnt > (MSG_STARTINGROW + MSG_ROWS-1)) { msgRowCnt = MSG_STARTINGROW; }
+
+		//Visualizzo il messaggio sul TFT-----------------------------------------
+ 		TFT_PRINT_MSG(msgRowCnt, msgIn);
+ 		msgRowCnt++; if (msgRowCnt > (MSG_STARTINGROW + MSG_ROWS-1)) { msgRowCnt = MSG_STARTINGROW; }
 
 		#if 0
 
@@ -667,8 +671,12 @@ void attachCommandCallbacks(CmdMessenger2 *cmd)		//va messa in fondo
 
 
 		cmd->attach(OnUnknownCommand);
-		cmd->attach(Msg, OnMsg);
 		//cmd->attach(CmdRobotHello, OnCmdRobotHello);
+
+		//Comandi da HOST -----------------------------------------
+		cmd->attach (CmdSonarScanSync, OnCmdSonarScanSync);
+
+		//Comandi verso il Robot-----------------------------------------
 		cmd->attach(CmdReboot, OnCmdReboot);
 
 		cmd->attach(CmdRobotStartMoving, OnCmdRobotGo);
@@ -676,20 +684,22 @@ void attachCommandCallbacks(CmdMessenger2 *cmd)		//va messa in fondo
 
 		cmd->attach(CmdRobotMoveCm, OnCmdRobotMoveCm);
 		cmd->attach(CmdRobotRotateDeg, OnCmdRobotRotateDeg);
+		cmd->attach(CmdGetSensorsLRate, OnCmdGetSensorsLRate);
+		cmd->attach(CmdGetSensorsHRate, OnCmdGetSensorsHRate);
+		cmd->attach(CmdSetLaser, OnCmdSetLaser);
 		//cmd->attach(CmdRobotRotateRadiants, OnCmdRobotRotateRadiants);
 
 		//cmd->attach(CmdRobotRele, OnCmdRobotRele);
 		//cmd->attach(CmdSetLed, OnCmdSetLed);
-		cmd->attach(CmdSetLaser, OnCmdSetLaser);
 		//cmd->attach(CmdSetPort, OnCmdSetPort);
 
+		// CallBack dal Robot--------------------------
+		cmd->attach(Msg, OnMsg);
 		cmd->attach(kbGetSensorsHRate, OnkbGetSensorsHRate);
 		cmd->attach(kbGetSensorsLRate, OnkbGetSensorsLRate);
 		cmd->attach(kbMovedCm, OnkbMovedCm);
 		cmd->attach(kbRotationDeg, OnkbRotatedDeg);
 		cmd->attach(kbGetPose, OnkbGetPose);
-		cmd->attach(CmdGetSensorsLRate, OnCmdGetSensorsLRate);
-		cmd->attach(CmdGetSensorsHRate, OnCmdGetSensorsHRate);
 
 		cmd->attach(CmdRobotSetMode, OnCmdRobotSetMode);
 		cmd->attach(cmdSpeech,OnCmdSpeech);
