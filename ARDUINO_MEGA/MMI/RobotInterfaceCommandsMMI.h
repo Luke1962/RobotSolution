@@ -63,7 +63,7 @@ static int msgRowCnt = MSG_STARTINGROW; //contatore
 //}
 void cmdMsg(CmdMessenger2 *cmd,const PROGMEM char *stringLiteral){
 //	cmd->sendCmd( Msg, msg );
- 	//SERIAL_MSG.print("1,"); SERIAL_MSG.print(msg); SERIAL_MSG.print(";");
+	//SERIAL_MSG.print("1,"); SERIAL_MSG.print(msg); SERIAL_MSG.print(";");
 	//ser.print("1,"); ser.print(msg); ser.print(";");
 	cmd->sendCmd(Msg);
 	cmd->sendCmdArg(stringLiteral);
@@ -89,7 +89,7 @@ void cmdMsg(CmdMessenger2 *cmd,   const __FlashStringHelper *msg, int v) {
 }
 void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 //	cmd->sendCmd( Msg, msg );
- 	//SERIAL_MSG.print("1,"); SERIAL_MSG.print(msg); SERIAL_MSG.print(";");
+	//SERIAL_MSG.print("1,"); SERIAL_MSG.print(msg); SERIAL_MSG.print(";");
 	//ser.print("1,"); ser.print(msg); ser.print(";");
 	cmd->sendCmd(Msg);
 	cmd->sendCmdArg(stringLiteral);
@@ -422,6 +422,10 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 
 	}
 
+	void OnCmdGetProxy(CmdMessenger2 *cmd) {
+		robotModel.cmdGetProxy();
+
+	}
 
 	//////////////////////////////////////////////////////////////////////////
 	/// C O M A N D I      S O N A R
@@ -502,34 +506,77 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 
 	void OnkbGetSensorsHRate(CmdMessenger2 *cmd)  //attenzione al limite dei 9600baud
 	{
-		tone(Pin_Buzzer, 3500, 30);//bip  che segnala la ricezione di del messaggio sulla seriale
+		tone(Pin_Buzzer, 1500, 30);//bip  che segnala la ricezione di del messaggio sulla seriale
 
 		robotModel.statusOld = robotModel.status;  // save current status
+												   
+		// param 1
 		robotModel.status.ts = (unsigned long)cmd->readInt16Arg(); // (unsigned long)millis();
 
+		// param 2
 		robotModel.status.tictac = cmd->readBoolArg();
 
+		// param 3,4,5
 		robotModel.status.posCurrent.x = cmd->readDoubleArg();
 		robotModel.status.posCurrent.y = cmd->readDoubleArg();
-		robotModel.status.posCurrent.r = cmd->readDoubleArg();
+		robotModel.status.posCurrent.r = cmd->readInt16Arg();
 
+		// param 6,7,8,9,10
 		robotModel.status.sensors.irproxy.fw = cmd->readBoolArg();	// IR proxy
 		robotModel.status.sensors.irproxy.fwHL = cmd->readBoolArg();	// IR proxy
+		robotModel.status.sensors.irproxy.fr = cmd->readBoolArg();	// IR proxy
+		robotModel.status.sensors.irproxy.fl = cmd->readBoolArg();	// IR proxy
 		robotModel.status.sensors.irproxy.bk = cmd->readBoolArg();	// IR proxy
+
+		// param 11
 		robotModel.status.sensors.pirDome = cmd->readBoolArg();		// movimento
 
+		// param 12,13,14
 		robotModel.status.sensors.analog[0] = (long)cmd->readInt16Arg();	//pot
 		robotModel.status.sensors.analog[1] = (long)cmd->readInt16Arg();	//batteria
 		robotModel.status.sensors.analog[2] = (long)cmd->readInt16Arg();	//light
 
+		// param 15,16
 		robotModel.status.act.rele[0] = cmd->readBoolArg();		//rele 1
 		robotModel.status.act.rele[1] = cmd->readBoolArg();		//rele 2
 
 		//robotModel.status.act.MotENR = cmd->readBoolArg();
 		//robotModel.status.act.MotENL = cmd->readBoolArg();
 
+
+		// param 17,18
 		robotModel.status.sensors.switchTop = cmd->readBoolArg();
 		robotModel.status.act.laserOn = cmd->readBoolArg();
+
+		robotModel.raiseEvents();
+
+
+
+
+	}
+	void OnkbProxy(CmdMessenger2 *cmd)  //attenzione al limite dei 9600baud
+	{
+		tone(Pin_Buzzer, 1500, 30);//bip  che segnala la ricezione di del messaggio sulla seriale
+		tone(Pin_Buzzer, 500, 30);//bip  che segnala la ricezione di del messaggio sulla seriale
+		tone(Pin_Buzzer, 1500, 30);//bip  che segnala la ricezione di del messaggio sulla seriale
+		 // save current status
+		robotModel.statusOld.sensors.irproxy.fw = robotModel.status.sensors.irproxy.fw; 
+		robotModel.statusOld.sensors.irproxy.fwHL = robotModel.status.sensors.irproxy.fwHL; 
+		robotModel.statusOld.sensors.irproxy.fr = robotModel.status.sensors.irproxy.fr; 
+		robotModel.statusOld.sensors.irproxy.fl = robotModel.status.sensors.irproxy.fl; 
+		robotModel.statusOld.sensors.irproxy.bk = robotModel.status.sensors.irproxy.bk; 
+		robotModel.statusOld.sensors.pirDome = robotModel.status.sensors.pirDome;
+ 
+
+
+		robotModel.status.sensors.irproxy.fw = cmd->readBoolArg();	// IR proxy
+		robotModel.status.sensors.irproxy.fwHL = cmd->readBoolArg();	// IR proxy
+		robotModel.status.sensors.irproxy.fr = cmd->readBoolArg();	// IR proxy
+		robotModel.status.sensors.irproxy.fl = cmd->readBoolArg();	// IR proxy
+		robotModel.status.sensors.irproxy.bk = cmd->readBoolArg();	// IR proxy
+
+		robotModel.status.sensors.pirDome = cmd->readBoolArg();		// movimento
+
 
 		robotModel.raiseEvents();
 
@@ -540,7 +587,7 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 
 	void OnkbGetSensorsLRate(CmdMessenger2 *cmd)  //attenzione al limite dei 9600baud
 	{
-		tone(Pin_Buzzer, 3000, 40);//bip  che segnala la ricezione di del messaggio sulla seriale
+		tone(Pin_Buzzer, 1000, 40);//bip  che segnala la ricezione di del messaggio sulla seriale
 		robotModel.status.sensors.batCharge = cmd->readInt16Arg();
 		robotModel.status.sensors.switchTop = cmd->readBoolArg();
 
@@ -572,6 +619,16 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 		robotModel.status.posCurrent.x = cmd->readDoubleArg();
 		robotModel.status.posCurrent.y = cmd->readDoubleArg();
 		robotModel.status.posCurrent.r = cmd->readDoubleArg();
+		robotModel.raiseEvents();
+
+	}
+	void OnkbSetMode(CmdMessenger2 *cmd)  
+	{
+		robotModel.statusOld.operatingMode = robotModel.status.operatingMode;  // save current status
+
+ 
+		robotModel.status.operatingMode = (operatingMode_e) cmd->readInt16Arg();
+
 		robotModel.raiseEvents();
 
 	}
@@ -609,8 +666,8 @@ void cmdMsg(CmdMessenger2 *cmd,const __FlashStringHelper *stringLiteral){
 		//dbg("**MSG**")
 
 		//Visualizzo il messaggio sul TFT-----------------------------------------
- 		TFT_PRINT_MSG(msgRowCnt, msgIn);
- 		msgRowCnt++; if (msgRowCnt > (MSG_STARTINGROW + MSG_ROWS-1)) { msgRowCnt = MSG_STARTINGROW; }
+		TFT_PRINT_MSG(msgRowCnt, msgIn);
+		msgRowCnt++; if (msgRowCnt > (MSG_STARTINGROW + MSG_ROWS-1)) { msgRowCnt = MSG_STARTINGROW; }
 
 		#if 0
 
@@ -700,6 +757,8 @@ void attachCommandCallbacks(CmdMessenger2 *cmd)		//va messa in fondo
 		cmd->attach(kbMovedCm, OnkbMovedCm);
 		cmd->attach(kbRotationDeg, OnkbRotatedDeg);
 		cmd->attach(kbGetPose, OnkbGetPose);
+		cmd->attach(kbProxy, OnkbProxy);
+		cmd->attach(kbSetMode, OnkbSetMode);
 
 		cmd->attach(CmdRobotSetMode, OnCmdRobotSetMode);
 		cmd->attach(cmdSpeech,OnCmdSpeech);

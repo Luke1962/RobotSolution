@@ -8,6 +8,7 @@
 #define TFT_ILI9327_8	//x:320 X y:480 con driver 	
 //#define TFT_ili9341
 //#define TFT_ili9488	
+#define NO_TOUCHSCREEN
 
 #ifdef TFT_ILI9327_8 // TFT 320x480
 	#pragma region TFT
@@ -32,41 +33,44 @@
 
 	// Initialize touchscreen
 	#pragma region touch screen
-	//#include <SPI.h>
+	#ifndef NO_TOUCHSCREEN
+		//#include <SPI.h>
 
 
-	//#define  TS1	//Touch screen  driver XPT2046_Touchscreen
-	#define  TS2	//Touch screen  driver XPT2046-2
+		//#define  TS1	//Touch screen  driver XPT2046_Touchscreen
+		#define  TS2	//Touch screen  driver XPT2046-2
 
-	#ifdef  TS1
-	#include <XPT2046_Touchscreen\XPT2046_Touchscreen.h>
-	#define isTouching() touched()
-	#else
-	#include <XPT2046-2/XPT2046-2.h>
+		#ifdef  TS1
+		#include <XPT2046_Touchscreen\XPT2046_Touchscreen.h>
+		#define isTouching() touched()
+		#else
+		#include <XPT2046-2/XPT2046-2.h>
 
-	#endif // TS1
+		#endif // TS1
 
-
-
-	//class TS_Point {
-	//public:
-	//	TS_Point(void) : x(0), y(0), z(0) {}
-	//	TS_Point(int16_t x, int16_t y, int16_t z) : x(x), y(y), z(z) {}
-	//	bool operator==(TS_Point p) { return ((p.x == x) && (p.y == y) && (p.z == z)); }
-	//	bool operator!=(TS_Point p) { return ((p.x != x) || (p.y != y) || (p.z != z)); }
-	//	uint16_t x, y, z;
-	//};
-	//#include <XPT2046\XPT2046.h>
+		//class TS_Point {
+		//public:
+		//	TS_Point(void) : x(0), y(0), z(0) {}
+		//	TS_Point(int16_t x, int16_t y, int16_t z) : x(x), y(y), z(z) {}
+		//	bool operator==(TS_Point p) { return ((p.x == x) && (p.y == y) && (p.z == z)); }
+		//	bool operator!=(TS_Point p) { return ((p.x != x) || (p.y != y) || (p.z != z)); }
+		//	uint16_t x, y, z;
+		//};
+		//#include <XPT2046\XPT2046.h>
 
 
-	//XPT2046 ts(CS_PIN, TIRQ_PIN);  // Param 2 - Touch IRQ Pin - interrupt enabled polling
-	#ifdef TS1
-		XPT2046_Touchscreen ts((uint8_t)Pin_TS_CS, (uint8_t)Pin_TS_TIRQ);  // Param 2 - Touch IRQ Pin - interrupt enabled polling
-	#else
+		//XPT2046 ts(CS_PIN, TIRQ_PIN);  // Param 2 - Touch IRQ Pin - interrupt enabled polling
+		#ifdef TS1
+			XPT2046_Touchscreen ts((uint8_t)Pin_TS_CS, (uint8_t)Pin_TS_TIRQ);  // Param 2 - Touch IRQ Pin - interrupt enabled polling
+		#else
 
-		XPT2046 ts((uint8_t)Pin_TS_CS, (uint8_t)Pin_TS_TIRQ);  // Param 2 - Touch IRQ Pin - interrupt enabled polling
+			XPT2046 ts((uint8_t)Pin_TS_CS, (uint8_t)Pin_TS_TIRQ);  // Param 2 - Touch IRQ Pin - interrupt enabled polling
 
-	#endif // TS1
+		#endif // TS1
+
+
+	#endif // !NO_TOUCHSCREEN
+
 
 
 	#pragma endregion

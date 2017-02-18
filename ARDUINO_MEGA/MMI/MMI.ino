@@ -19,13 +19,13 @@
 		#include <Arduino.h>
 		#include <hwMMI_config.h>
 		#include <SPI.h>
-		#include <XPT2046-2\XPT2046-2.h>	//touch controller, deve stare prima di UTFT
+//		#include <XPT2046-2\XPT2046-2.h>	//touch controller, deve stare prima di UTFT
 		#include <UTFT.h>						//display TFT
 		#include <buzzer\buzzer.h>
 		#include <ClickEncoder/ClickEncoder.h>
 
 		#include "hardwareIncludes.h"
-		#include <SoftwareSerial.h>
+//		#include <SoftwareSerial.h>
 
 	#pragma endregion
 
@@ -44,7 +44,7 @@
 	#define OPT_SERVOSONAR 1	//INCLUDI FUNZIONALITA' SERVO-SONAR
 	#define OPT_ENCODERS  0	//INCLUDI ENCODERS
 
-	#define INPUTCHARARRAYSIZE 50 //dimensione buffer seriale
+	#define INPUTCHARARRAYSIZE 40 //dimensione buffer seriale
 
 
 	//////////////////////////////////////////////////////////////////////////////////
@@ -66,23 +66,10 @@
 			#include <macros.h>
 			#include <menuUTFT.h>
 			#include <chainStream.h>// concatenate multiple input streams (this allows adding a button to the encoder)
-				//#include <menuUTouch.h>
 			#include <menuFields.h>
-
-			//#include <ArduinoMenu\src\menu.h>
-			//#include <ArduinoMenu\src\chainStream.h>// concatenate multiple input streams (this allows adding a button to the encoder)
-			//#include <ArduinoMenu\src\ClickEncoderStream.h> // Quad encoder, usa menu.h, ClickEncoder
-			//#include <ArduinoMenu\src\macros.h>
-			//#include <ArduinoMenu\src\menuUTFT.h>	//#include <menuGFX.h>
-			//#include <ArduinoMenu\src\menuFields.h>
-			//#include <ArduinoMenu\src\quadEncoder.h>
-			//#include <ArduinoMenu\src\menuUTouch.h>
-			//#include <ArduinoMenu\src\keyStream.h>
-			//#include <ArduinoMenu\src\genericKeyboard.h>
 		#pragma endregion
 
 		#include <ChibiOS_AVR/ChibiOS_AVR.h>
-		#include <SoftwareSerial.h>		//C:\Program Files %28x86%29\Arduino\hardware\arduino\avr\libraries\SoftwareSerial
 		#include <TinyGPSplus\TinyGPS++.h>	//se manca non compila a causa del robotModel.cpp nella stessa cartella di robot\Commands_Enum.h
 
 		#include <string.h> 
@@ -91,14 +78,10 @@
 		//#include <CmdMessenger/CmdMessenger.h>
 		//#include <robot\Commands_Enum.h>
 		#include <MyRobotLibs\robotModel.h>
+		#include <SoftwareSerial.h>		//C:\Program Files %28x86%29\Arduino\hardware\arduino\avr\libraries\SoftwareSerial
 		#include <MyRobotLibs\SpeakSerialInterface.h>
-		#include <MyRobotLibs\CircularBuffer.h>
+		//#include <MyRobotLibs\CircularBuffer.h>
 
-		//// ROS
-		//#include <ros_lib/ros/ros.h>
-		//#include <ros_lib/ros/duration.h>
-		//#include <ros_lib/ros/time.h> //non serve
-		//#include <ros_lib/sensor_msgs/Range.h>
 
 	#pragma endregion
 #pragma endregion
@@ -122,7 +105,11 @@
 	#pragma region TFT
 		//UTFT     tft(ILI9327_8,30,31,32,33 );		//was 38, 39, 40, 41
 		UTFT     tft(ILI9327_8, Pin_TFT_RS, Pin_TFT_WR, Pin_TFT_CS, Pin_TFT_RST);		//was 38, 39, 40, 41
-		TS_Point p;
+		#ifndef NO_TOUCHSCREEN
+			TS_Point p;
+
+		#endif // !NO_TOUCHSCREEN
+
 		MUTEX_DECL(mutexTFT);// accesso al display TFT
 
 
@@ -143,7 +130,7 @@
 		
 		#include "RobotInterfaceCommandsMMI.h"
 	#pragma endregion
-	// ////////////////////////////////////////////////////////////////////////////////////////////
+
 
 		#include "TFT_HAL\TFT_HAL.h"
 
@@ -181,8 +168,8 @@
 		bool mfLDSScanBatch();
 		bool mfSetRele1On();
 		bool mfSetRele1Off();
-		bool mfHelp();
-
+		bool mfVoid();
+ 
 		int aValue = 50;
 		float fValue = 101.1;
 		/////////////////////////////////////////////////////////////////////////
@@ -208,7 +195,7 @@
 			,OP("Autonomous", mfSetModeAutonomous)
 			,OP("slave", mfSetModeSlave)
 		);
-		MENU(subMenuMove, "Move.."
+		MENU(subMenuMove, "Commands.."
 			,OP("Forward", mfMoveFW)
 			,OP("Back", mfMoveBK)
 			,OP("Right", mfRotateR)
@@ -216,6 +203,8 @@
 			,FIELD(robotModel.cmdSettingDefaultMoveCm, "set FW/BK x", " cm", 0, 500, 10, 1)
 			,FIELD(robotModel.cmdSettingDefaultRotateDeg, "set L/R x", " deg", 0, 360, 30, 1)
 			,FIELD(robotModel.status.cmd.clock, "CK speed", " uS", 2500, 4000, 500, 100)
+			,OP("GetSens HR", mfGetSensorsHR)
+
 		);
 		MENU(subMenuModifyStatus, "Modify.."
 			,FIELD(robotModel.status.posCurrent.x, "Pos x", " cm", 0, 1000, 10, 1)
@@ -230,11 +219,11 @@
 				
 		);
 		MENU(subMenuHelp, "Help.."
-			,OP( "Led Rosso: Core ",mfHelp)
-			,OP( "Led Lime:   Menu ", mfHelp)
-			,OP( "Led Verde: Brain  ", mfHelp)
-			,OP( "Led Blu:  BTH ", mfHelp)
-			,OP( "Led Aqua:   TFT ", mfHelp)
+			,OP( "Led Rosso: Core ", mfVoid)
+			,OP( "Led Lime:   Menu ", mfVoid)
+			,OP( "Led Verde: Brain  ", mfVoid)
+			,OP( "Led Blu:  BTH ", mfVoid)
+			,OP( "Led Wite:   TFT ", mfVoid)
 		);
 
 		MENU(mainMenu, "Main Menu"
@@ -260,13 +249,13 @@
 			return true;
 		}
 		bool mfSetModeAutonomous() {
-			robotModel.cmdSetMode(MODE_AUTONOMOUS);
+			robotModel.cmdSetMode(operatingMode_e::MODE_AUTONOMOUS);
 			playSingleNote(NOTE_A7, 80);
 			myMenu.redraw();
 			return true;
 		}
 		bool mfSetModeSlave() {
-			robotModel.cmdSetMode(MODE_SLAVE);
+			robotModel.cmdSetMode(operatingMode_e::MODE_SLAVE);
 			playSingleNote(NOTE_D7, 80);
 			myMenu.redraw();
 			return true;
@@ -346,14 +335,15 @@
 			myMenu.redraw();
 			return true;
 		}
-		bool mfHelp() {
-			int r = MSG_STARTINGROW;
-			TFT_PRINT_MSG(r++, "Led Rosso: Core ")
-			TFT_PRINT_MSG(r++, "Led Gray:   MMI ")
-			TFT_PRINT_MSG(r++, "Led Verde: Brain  ")
-			TFT_PRINT_MSG(r++, "Led Blu:  BTH ")
-			TFT_PRINT_MSG(r++, "Led White:   TFT ")
 
+		bool mfGetProxy() {
+			robotModel.cmdGetProxy();
+			myMenu.redraw();
+			return true;
+		}
+
+
+		bool mfVoid() {
 			myMenu.redraw();
 			return true;
 		}
@@ -416,7 +406,7 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 		// mailbox size and memory pool object count
 		const size_t MBOX_GLOBAL_CAPACITY = 6;
 		int mailBoxGlobalFreeCounter = MBOX_GLOBAL_CAPACITY; //conta quante locazioni sono disponibili
-		#define INPUTCHARARRAYSIZE 50
+		#define INPUTCHARARRAYSIZE 20
 		// type for a memory pool object
 		struct PoolObject_t {
 			bool isMsgString; // mettere a false se passo un numero anzichè una stringa
@@ -449,6 +439,27 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 		}
 
 		void speakFifo(const char inStr[]) {
+			// get object from memory pool
+			mailBoxGlobalFreeCounter--;
+			dbg2("Free mbox-: ",mailBoxGlobalFreeCounter);
+			PoolObject_t* p = (PoolObject_t*)chPoolAlloc(&memPoolVoice);
+			if (!p) { Serial.println("chPoolAlloc failed from speakFifo");	while (1); }
+
+
+			// form message
+			p->strSpeech = (char*)inStr;		// (char*)strSpeech;
+																//p->strSpeech = " imbecille spostati che devo passare";		// (char*)strSpeech;
+																//strcpy(p->str, "oi");
+																//p->size = 2;
+																//dbg2("thdFeedFifo send: ",p->strSpeech)
+
+			// send message
+			msg_t s = chMBPost(&mailVoice, (msg_t)p, TIME_IMMEDIATE);
+			if (s != MSG_OK) { Serial.println("chMBPost failed");	while (1); }
+
+			//playSingleNote(NOTE_A5, 40);
+		}
+		void speakFifo(__FlashStringHelper *inStr[]) {
 			// get object from memory pool
 			mailBoxGlobalFreeCounter--;
 			dbg2("Free mbox-: ",mailBoxGlobalFreeCounter);
@@ -1145,7 +1156,8 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 
 						break;
 						case operatingMode_e::MODE_SLAVE:
-
+							robotModel.cmdReadAllSensors();
+							sleepTime = 2000;
 						break;
 						case operatingMode_e::MODE_JOYSTICK:
 						break;
@@ -1192,21 +1204,21 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 					{
 					case	operatingMode_e::MODE_AUTONOMOUS:
 
-						SPEAK(" okei esploro");
+						SPEAK(F(" okei esploro"));
 						sleepTime = 2000;
 					break;
 					case operatingMode_e::MODE_SLAVE:
-						SPEAK(" okei comanda");
+						SPEAK(F(" okei comanda"));
 						sleepTime = 2000;
 					break;
 
 					case operatingMode_e::MODE_JOYSTICK:
-						SPEAK(" okei comanda col gioistic");
+						SPEAK(F(" okei comanda col gioistic"));
 						sleepTime = 2000;
 					break;
 
 					default:
-						SPEAK("non conosco questo modo ");
+						SPEAK(F("non conosco questo modo "));
 						sleepTime = 2000;
 						break;
 					}
@@ -1317,18 +1329,19 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 			unsigned long t1;
 			unsigned long t2;
 			struct myMsgStruct  myTftMsg ;
+			//chMtxUnlock(&mutexTFT);
 
 			TFTCLEAR;
-			tftPrintCaptions();
 			while (true)// loop di visualizzazione dati dai 38 ai 50ms (in base alla lunghezza dei gauge)
 			{
+			tftPrintCaptions();
 				dbg("T>")
 				//commuta il led su TFT
 				HbLed = !HbLed;	//Heartbeat Led
 				TFT_LED_TFT(1);
 
 				t1 = millis();
-				chMtxLock(&mutexTFT); //si mette in attesa se un altro thread sta scrivendo su TFT
+				//chMtxLock(&mutexTFT); //si mette in attesa se un altro thread sta scrivendo su TFT
 
 				// imposta i colori di default
 				tft.setBackColor(VGA_BLACK);
@@ -1363,7 +1376,7 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 					break;
 				case operatingMode_e::MODE_UNKNOWN:
 					tft.setColor(VGA_WHITE);
-					strTmp = "UNKNOWN";
+					strTmp = "UNKNOWN   ";
 					break;
 
 				default:
@@ -1412,10 +1425,17 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 
 				// IR SENSORS DETECTION
 				
-				drawLedRect(TFTDATACOL, TFTROW(r++), robotModel.status.sensors.irproxy.fw, VGA_RED);
-				drawLedRect(TFTDATACOL + 10, TFTROW(r++), robotModel.status.sensors.irproxy.fl, VGA_RED);
-				drawLedRect(TFTDATACOL + 20, TFTROW(r++), robotModel.status.sensors.irproxy.fr, VGA_RED);
+				drawLedRect(TFTDATACOL, TFTROW(r), robotModel.status.sensors.irproxy.fw, VGA_FUCHSIA);
+				drawLedRect(TFTDATACOL + 10, TFTROW(r), robotModel.status.sensors.irproxy.fwHL, VGA_FUCHSIA);
+				drawLedRect(TFTDATACOL + 20, TFTROW(r), robotModel.status.sensors.irproxy.fl, VGA_FUCHSIA);
+				drawLedRect(TFTDATACOL + 30, TFTROW(r), robotModel.status.sensors.irproxy.fr, VGA_FUCHSIA);
+				drawLedRect(TFTDATACOL + 40, TFTROW(r), robotModel.status.sensors.irproxy.fw, VGA_FUCHSIA);
+				drawLedRect(TFTDATACOL + 40, TFTROW(r++), robotModel.status.sensors.irproxy.bk, VGA_FUCHSIA);
 
+				drawLedRect(TFTDATACOL, TFTROW(r), robotModel.status.sensors.bumper.right, VGA_RED);
+				drawLedRect(TFTDATACOL + 10, TFTROW(r), robotModel.status.sensors.bumper.center, VGA_RED);
+				drawLedRect(TFTDATACOL + 20, TFTROW(r++), robotModel.status.sensors.bumper.left, VGA_RED);
+ 
 				#pragma region VISUALIZZA I MESSAGGI IN INGRESSO
 				//TFTprintAtNumI(TFTDATACOL , TFTROW(r++), myRingBufTftMsg->elements, VGA_RED);
 				#if 0
@@ -1506,29 +1526,29 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 			switch (c)	//Esegue il comando
 			{
 			case 'F': //FORWARD
-				SPEAK("OKEI AVANTI");
+				SPEAK(F("OKEI AVANTI"));
 				robotModel.cmdMoveCm(robotModel.cmdSettingDefaultMoveCm);
 				break;
 			case 'B'://BACK
-				SPEAK("OKEI INDIETRO");
+				SPEAK(F("OKEI INDIETRO"));
 				robotModel.cmdMoveCm(-robotModel.cmdSettingDefaultMoveCm);
 
 				break;
 			case 'R'://RIGHT
-				SPEAK("OKEI DESTRA");
+				SPEAK(F("OKEI DESTRA"));
 				robotModel.cmdRotateDeg(robotModel.cmdSettingDefaultRotateDeg);
 
 				break;
 			case 'L'://LEFT
-				SPEAK("OKEI SINSTRA");
+				SPEAK(F("OKEI SINSTRA"));
 				robotModel.cmdRotateDeg(-robotModel.cmdSettingDefaultRotateDeg);
 				break;
 			case 'W'://Webcam On
-				SPEAK("uebcam On");
+				SPEAK(F("uebcam On"));
 
 				break;
 			case 'w'://Webcam Off
-				SPEAK("uebcam spenta");
+				SPEAK(F("uebcam spenta"));
 
 				break;
 				// Comandi di movimento no limitato
@@ -1700,6 +1720,7 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 		}
 	#pragma endregion 
 
+
 // FINE PROCESSI CHIBIOS ////////////////////////////////////////////////////////////////////////////////
 
 
@@ -1749,84 +1770,7 @@ MUTEX_DECL(mutexSerialVoice);// accesso alla seriale
 #endif // 0
 #pragma endregion 
 
- #if 1
 
- 
-
-
- 
-
-
-
-
-	// ////////////////////////////////////////////////////////////////////////////////
-	/// ///////////////////////////////////////////////////////////////////////////////
-	// thread 4 - ROS SERIAL
-	/// ///////////////////////////////////////////////////////////////////////////////
-	// ////////////////////////////////////////////////////////////////////////////////
-	#if 0
-						
-		ros::Time time;
-
-		ros::NodeHandle  nh;
-
-		sensor_msgs::Range range_msg;
-		ros::Publisher pub_range("/ultrasound", &range_msg);
-
-		const int adc_pin = 0;
-
-		unsigned char frameid[] = "/ultrasound";
-
-
-
-		long range_time;
-
-		static THD_WORKING_AREA(waThreadROS, 200);
-		static THD_FUNCTION(ThreadROS, arg) {
-
-		// rosserial Ultrasound Example
-		//
-		// This example is for the Maxbotix Ultrasound rangers.
-
-
-
-		nh.initNode();
-		nh.advertise(pub_range);
-
-
-		range_msg.radiation_type = sensor_msgs::Range::ULTRASOUND;
-		range_msg.header.frame_id = frameid;
-		range_msg.field_of_view = 0.1;  // fake
-		range_msg.min_range = 0.0;
-		range_msg.max_range = 6.47;
-
-		///pinMode(8, OUTPUT);
-		///digitalWrite(8, LOW);
-
-		//loop ---------------------------------------------------------------
-		while (1) {
-
-		//publish the adc value every 50 milliseconds
-		//since it takes that long for the sensor to stablize
-		int r = 0;
-
-		range_msg.range = (float)robotModel.getLaserDistance();
-		range_msg.header.stamp = range_msg.header.stamp.now();
-		pub_range.publish(&range_msg);
-		range_time = millis() + 50;
-
-		nh.spinOnce();
-
-		chThdSleepMilliseconds(50);// Sleep for n milliseconds.
-		}
-		//	return 0;
-		}
-		
-	#endif // ROSSERIAL
-
-
-
-#endif
 #pragma endregion  // thread non attivi
  
 
@@ -1867,11 +1811,8 @@ void thd_Setup() {
 	chThdCreateStatic(waBT, sizeof(waBT), NORMALPRIO + 3, thdBT, NULL);
 	chThdCreateStatic(waMenu, sizeof(waMenu), NORMALPRIO + 3, thdMenu, NULL);
 	chThdCreateStatic(waBrain, sizeof(waBrain), NORMALPRIO+3, thdBrain, NULL);
-	//chThdCreateStatic(waComandiVocali, sizeof(waComandiVocali), NORMALPRIO + 2, thdComandiVocali, NULL);
-	chThdCreateStatic(waFifoToSpeech, sizeof(waFifoToSpeech), NORMALPRIO + 2, thdFifoToSpeech, NULL);
 
-	//chThdCreateStatic(waFlashLed, sizeof(waFlashLed), NORMALPRIO + 2, thdFlashLed, NULL);
-	//chThdCreateStatic(waThreadEsplora, sizeof(waThreadEsplora), NORMALPRIO + 2, ThreadEsplora, NULL);//-Esplora
+	//	chThdCreateStatic(waFifoToSpeech, sizeof(waFifoToSpeech), NORMALPRIO + 2, thdFifoToSpeech, NULL);
 	while (1) {}
 }
 
@@ -1954,6 +1895,8 @@ void setup()
 			///  ts.setPrecision(PREC_HI);
 			tft.setFont(SmallFont); //	tft.setFont(BigFont);
 
+			TFTCLEAR;
+			tftPrintCaptions();
 
 			//---------------------------------------
 
@@ -1996,7 +1939,8 @@ void setup()
 	#pragma region Inizializzazione RobotModel
 		robotModel.cmdSettingDefaultMoveCm = 20;
 		robotModel.cmdSettingDefaultRotateDeg = 30;
- 
+		robotModel.status.operatingMode = operatingMode_e::MODE_SLAVE;
+
 	#pragma endregion
 
 		//	singMyMelody(myMelody1);
