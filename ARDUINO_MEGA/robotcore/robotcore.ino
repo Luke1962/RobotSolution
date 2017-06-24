@@ -13,6 +13,9 @@
 
 #include <MyRobotLibs\systemConfig.h>
 #include <MyRobotLibs\hw_config.h>
+#include <MyRobotLibs\helper.h>
+//#include <NewTone\NewTone.h>
+//#include <MyRobotLibs\myStepper.h>
 
 #pragma endregion
 // ////////////////////////////////////////////////////////////////////////////////////////////
@@ -32,10 +35,10 @@
 #include <ros_lib\sensor_msgs\Range.h>
 #include <std_msgs/String.h>
 #include <std_msgs/Empty.h>
-
+#include <sensor_msgs/LaserScan.h>
 #include <sensor_msgs/Range.h>
 #include <tf/transform_broadcaster.h>
-
+ 
 
 #include <digitalWriteFast.h>
 #include <ChibiOS_AVR.h>
@@ -46,7 +49,8 @@
 
 
 #include <Arduino.h>	//per AttachInterrupt
-
+//#include <Servo\src\Servo.h>
+#include <Timer5/Timer5.h>
 
 
 #pragma endregion
@@ -147,9 +151,11 @@
 
 
 #if OPT_STEPPERLDS
-	#include <NewTone\NewTone.h> // PER GENERARE IL CLOCK DELLO STEPPER LDS
-	stepper_c myLDSstepper;
+//	#include <NewTone/NewTone.h> // PER GENERARE IL CLOCK DELLO STEPPER LDS
+	#include <MyStepper\myStepper.h>
+	myStepper_c  myStepperLDS(PIN_STEPPERLDS_ENABLE, PIN_STEPPERLDS_CK, PIN_STEPPERLDS_CW, PIN_STEPPERLDS_END);
 #endif
+
 
 
 #pragma endregion
@@ -164,13 +170,19 @@ struct robot_c robot;	//was  struct robot_c robot;
 // ////////////////////////////////////////////////////////////////////////////////////////////
 //  CmdMessenger object to the default Serial port
 // ////////////////////////////////////////////////////////////////////////////////////////////
-#include <CmdMessenger2/CmdMessenger2.h>
-static CmdMessenger2 cmdMMI = CmdMessenger2(SERIAL_MMI);
-static CmdMessenger2 cmdPC = CmdMessenger2(SERIAL_MSG);
-#include <MyRobotLibs\RobotInterfaceCommands2.h>
+
+#if OPT_CMDMMI
+	#include <CmdMessenger2/CmdMessenger2.h>
+	static CmdMessenger2 cmdMMI = CmdMessenger2(SERIAL_MMI);
+	static CmdMessenger2 cmdPC = CmdMessenger2(SERIAL_MSG);
+	#include <MyRobotLibs\RobotInterfaceCommands2.h>
+
+#endif // OPT_CMDMMI
 // usare le macro  MSG per inviare messaggi sia su Serial_PC, sia Serial_MMI
+
 //------------------------------------------------------------------------------
 #pragma region DEFINIZIONE MAILBOX VOICE
+/*
 // mailbox size and memory pool object count
 const size_t MBOX_COUNT = 6;
 
@@ -191,7 +203,8 @@ mboxObject_t msgObjArray[MBOX_COUNT];
 
 // mailbox structure
 //MAILBOX_DECL(mailVoice, &letter, MBOX_COUNT);
-
+*/
+#pragma endregion
 
 
 
@@ -205,24 +218,11 @@ MUTEX_DECL(mutexSerialMMI);// accesso alla seriale
 MUTEX_DECL(mutexSerialPC);// accesso alla seriale
 MUTEX_DECL(mutexSensors);// accesso ai sensori in lettura e scrittura
 
-#pragma endregion
 
 // ////////////////////////////////////////////////////////////////////////////////////////////
 
 #pragma endregion
-
-// ////////////////////////////////////////////////////////////////////////////////////////////
-//  FUNZIONI E UTILITIES GLOBALI
-// ////////////////////////////////////////////////////////////////////////////////////////////
-//void playSingleNote(int pin, int freq,int noteDuration) {
-//	tone(pin, freq, noteDuration);
-//	noTone(pin);
-//}
-//Dichiarazione di funzione che punta all’indirizzo zero
-void(*softReset)(void) = 0;
-
-//volatile bool interruptFlag = 0;
-
+#pragma region Helper Functions
 
 
 // ////////////////////////////////////////////////////////////////////////////////////////////
@@ -242,16 +242,73 @@ void lampeggiaLed(int pin, int freq, uint16_t nvolte) {
 // ////////////////////////////////////////////////////////////////////////////////////////////
 
 void countDown(int seconds) {
-	MSG3("CountDown in ", seconds," sec...");
+	MSG3("CountDown in ", seconds, " sec...");
 	for (size_t i = seconds; i > 0; i--)
 	{
-		MSG2("  -",i);
+		MSG2("  -", i);
 		delay(1000);
 	}
 }
-// ////////////////////////////////////////////////////////////////////////////////////////////
-#pragma region ROS
 
+// ////////////////////////////////////////////////////////////////////////////////////////////
+
+
+// invia un  messaggio con la descrizione dell'evento e lo resetta 
+void msgEventHR() {
+	if (robot.status.pendingEvents.bumperF) { MSG("bumperF  EVENT"); robot.status.pendingEvents.bumperF = false; }
+	if (robot.status.pendingEvents.bumperL) { MSG("bumperL  EVENT"); robot.status.pendingEvents.bumperL = false; }
+	if (robot.status.pendingEvents.bumperR) { MSG("bumperR  EVENT"); robot.status.pendingEvents.bumperR = false; }
+	if (robot.status.pendingEvents.EncL) { MSG("EncL  EVENT"); robot.status.pendingEvents.EncL = false; }
+	if (robot.status.pendingEvents.EncR) { MSG("EncR  EVENT"); robot.status.pendingEvents.EncR = false; }
+	if (robot.status.pendingEvents.irproxyB) { MSG("irproxyB  EVENT"); robot.status.pendingEvents.irproxyB = false; }
+	if (robot.status.pendingEvents.irproxyF) { MSG("irproxyF  EVENT"); robot.status.pendingEvents.irproxyF = false; }
+	if (robot.status.pendingEvents.irproxyFH) { MSG("irproxyFH  EVENT"); robot.status.pendingEvents.irproxyFH = false; }
+	if (robot.status.pendingEvents.irproxyL) { MSG("irproxyL  EVENT"); robot.status.pendingEvents.irproxyL = false; }
+	if (robot.status.pendingEvents.irproxyR) { MSG("irproxyR  EVENT"); robot.status.pendingEvents.irproxyR = false; }
+
+	if (robot.status.pendingEvents.pirDome) { MSG("pirDome  EVENT"); robot.status.pendingEvents.pirDome = false; }
+	//if (robot.status.pendingEvents.analog[0]) { MSG("POT EVENT"); robot.status.pendingEvents.analog[0]= false;	}
+	//if (robot.status.pendingEvents.analog[2]) { MSG("LIGHT EVENT");robot.status.pendingEvents.analog[2]= false;	 }
+
+}
+// se pending invia messaggio di evento su Batteria,luca e GPS
+void msgEventLR() {
+
+	if (robot.status.pendingEvents.batCharge) { MSG("BATTERY EVENT"); robot.status.pendingEvents.batCharge = false; }
+	if (robot.status.pendingEvents.light) { MSG("light  EVENT"); robot.status.pendingEvents.light = false; }
+	if (robot.status.pendingEvents.gps) { MSG("GPS  EVENT"); robot.status.pendingEvents.gps = false; }
+
+}
+
+#pragma endregion
+
+
+
+/// ///////////////////////////////////////////////////////////////////////////////
+// ROS
+/// ///////////////////////////////////////////////////////////////////////////////
+#pragma region ROS
+#include <math.h>
+
+#include <ros.h>
+#include <ros/time.h>
+#include <std_msgs/String.h>
+
+
+
+
+
+#include <std_msgs/Empty.h>
+
+
+#include <tf/tf.h>
+#include <tf/transform_broadcaster.h> 
+#include <sensor_msgs/Range.h>    // ultrasound
+#include <geometry_msgs/Twist.h>  // cmd_vel
+#include <sensor_msgs/LaserScan.h>  // LDS
+ros::NodeHandle  nh;
+
+#define ROS_INFO(s) nh.loginfo(s);
 
 #pragma endregion
 // ////////////////////////////////////////////////////////////////////////////////////////////
@@ -265,71 +322,124 @@ void countDown(int seconds) {
 //                   /////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////
-
-//////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-// thread 1		- Esplora
-//////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-/*
-static THD_WORKING_AREA(waThreadEsplora, 400);
-static THD_FUNCTION(ThreadEsplora, arg) {
-const int FWDIST = 10;
-int alfa = 0;
-int cmDone = 0; // percorso eseguito a valle di un comando moveCm o RotateDeg
-int stuckCount = 0;
-
-while (robot.status.operatingMode == AUTONOMOUS)
-{
-
-TOGGLEPIN(Pin_LED_TOP_B);
-robot.status.parameters.sonarStartAngle = 0;
-robot.status.parameters.sonarEndAngle = 180;
-robot.status.parameters.sonarStepAngle = 30;
-robot.status.parameters.sonarScanSweeps = 1;
-robot.status.parameters.sonarMedianSamples = 2;
-robot.status.parameters.sonarScanSpeed = 30; // map(analogRead(Pin_AnaPot1), 0, 1023, 10, 500);  //was = 30 ms di attesa tra due posizioni
-
-robot.SonarScanBatch(&servoSonar, &Sonar);
-alfa = 90 - robot.status.parameters.SonarMaxDistAngle;
-SERIAL_MSG.print("Max dist @alfa:"); SERIAL_MSG.println(alfa);
-dbg2("Max dist cm:", robot.status.parameters.sonarMaxDistance)
-TOGGLEPIN(Pin_LED_TOP_B);
-
-// invia i dati Sonar
-kbSonarSendData(&cmdMMI);
-TOGGLEPIN(Pin_LED_TOP_B);
+#pragma region CHIBIOS
 
 
-robot.rotateDeg(alfa);
-cmDone = robot.moveCm(robot.status.parameters.sonarMaxDistance);	// avanti
-if (cmDone < (robot.status.parameters.sonarMaxDistance - 1))	//ostacolo ?
-{
-SERIAL_MSG.println("1,Obst!;");
-robot.moveCm(-FWDIST);	// torna indietro
-TOGGLEPIN(Pin_LED_TOP_B);
-stuckCount++;
-if (stuckCount>2)
-{
-robot.rotateDeg(180); //inverto la direzione
-TOGGLEPIN(Pin_LED_TOP_B);
-stuckCount = 0;
-}
-}
-else //nessun ostacolo, azzero il contatore
-{
-stuckCount = 0;
-}
-TOGGLEPIN(Pin_LED_TOP_B);
+	//////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////
+	// thread ROS - pubblica Laser
+	//////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////
+	sensor_msgs::LaserScan CDLaser_msg;
+	ros::Publisher pub_Laser("LaserData", &CDLaser_msg);
+
+	static THD_WORKING_AREA(waRosPublishLaserScan, 400);
+	static THD_FUNCTION(thdRosPublishLaserScan, arg) {
 
 
-chThdSleepMilliseconds(1500);	// Sleep for 150 milliseconds.
+		//
+		float f_angle_min;
+		float f_angle_max;
+		float f_angle_increment;
+		float f_time_increment;
+		float f_scan_time;
+		float f_range_min;
+		float f_range_max;
+		float f_ranges[5]; // max of 30 measurements
+		float f_intensities[5];
 
-}
-//  return 0;
-}
-*/
+		int publisher_timer;
 
+
+		nh.initNode();
+		nh.advertise(pub_Laser);
+
+		f_angle_min = -1.57;
+		f_angle_max = 1.57;
+		f_angle_increment = 0.785;  // 3.14/4   - 5 measurement points
+		f_time_increment = 10;
+		f_scan_time = 4;
+		f_range_min = 0.1;
+		f_range_max = 30;
+
+		CDLaser_msg.ranges_length = 5;
+		CDLaser_msg.intensities_length = 5;
+
+		// create the test data
+		for (int z = 0; z<5; z++)
+		{
+			f_ranges[z] = z;
+			f_intensities[z] = z*z;
+		}
+ 
+		while (true)
+		{
+			if (millis() > publisher_timer)
+			{
+				CDLaser_msg.header.stamp = nh.now();
+				CDLaser_msg.header.frame_id = "laser_frame";
+				CDLaser_msg.angle_min = f_angle_min;
+				CDLaser_msg.angle_max = f_angle_max;
+				CDLaser_msg.angle_increment = f_angle_increment;
+				CDLaser_msg.time_increment = f_time_increment;
+				CDLaser_msg.scan_time = f_scan_time;
+				CDLaser_msg.range_min = f_range_min;
+				CDLaser_msg.range_max = f_range_max;
+
+				for (int z = 0; z<5; z++)
+				{
+					CDLaser_msg.ranges[z] = f_ranges[z];
+				}
+
+				for (int z = 0; z<5; z++)
+				{
+					CDLaser_msg.intensities[z] = f_intensities[z];
+				}
+
+				publisher_timer = millis() + 1000;
+				pub_Laser.publish(&CDLaser_msg);
+			}
+			nh.spinOnce();
+			chThdSleepMilliseconds(50);
+			//delay(500);
+		}
+	 }
+
+
+	//////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////
+	// thread ROS - pubblica Laser
+	//////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////
+	static THD_WORKING_AREA(waRosPublishLDS, 400);
+	static THD_FUNCTION(thdRosPublishLDS, arg) {
+		//#define PIN_MOTORLDS_DIR 45
+		//#define PIN_MOTORLDS_ENABLE 44
+		//#define PIN_MOTORLDS_CK 11
+
+		//chMtxLock(&mutexSensors);
+		// Allo startup leggo tutti isensori
+		robot.readAllSensors();	//IR proxy, Gyro, GPS
+								//	chMtxUnlock(&mutexSensors);
+		sensor_msgs::Range range_msg;
+		ros::Publisher pub_range("/ultrasound", &range_msg);
+
+		while (1)
+		{
+ 
+			///-------------------------------------------------------------
+			// ROS Pubblicazione range_msg 
+			///-------------------------------------------------------------
+
+			range_msg.range = (float)robot.getLDSDistanceCm() / 100;
+			range_msg.header.stamp = nh.now();
+			pub_range.publish(&range_msg);
+
+ 
+
+		}
+		chThdSleepMilliseconds(50);
+	 }
 
 //////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////
@@ -426,13 +536,18 @@ static THD_FUNCTION(thdReadSensorsLR, arg) {
 	//  return 0;
 }
 
+
+
+
+
 //////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////
 // thread   MMIcommands - ricezione comandi da MMI
 //////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////
-static THD_WORKING_AREA(waMMIcommands, 200);
-static THD_FUNCTION(thdMMIcommands, arg) {
+#if OPT_CMDMMI
+	static THD_WORKING_AREA(waMMIcommands, 200);
+	static THD_FUNCTION(thdMMIcommands, arg) {
 	//static msg_t MMIcommands(void *arg)
 
 
@@ -446,9 +561,9 @@ static THD_FUNCTION(thdMMIcommands, arg) {
 
 		LEDTOP_B_ON
 
-		///osalSysDisable(); //disabilita Interupt
-		cmdMMI.feedinSerialData(); // Comando da interfaccia MMI ?, Se sì lo esegue
-		///osalSysEnable();//abilita Interupt
+			///osalSysDisable(); //disabilita Interupt
+			cmdMMI.feedinSerialData(); // Comando da interfaccia MMI ?, Se sì lo esegue
+			///osalSysEnable();//abilita Interupt
 		LEDTOP_B_OFF
 
 			chThdSleepMilliseconds(900);
@@ -458,382 +573,351 @@ static THD_FUNCTION(thdMMIcommands, arg) {
 	}
 }
 
-//////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-// thread   PCcommands - ricezione comandi da PC (per Debug)
-//////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-static THD_WORKING_AREA(waPCcommands, 100);
-static THD_FUNCTION(thdPCcommands, arg) {
-	// Setup CommandMessenger -----------------------------------------------------
-	cmdPC.printLfCr();   // Adds newline to every command 
-	attachCommandCallbacks(&cmdPC);// Attach my application's user-defined callback methods
-	MSG("1,thdPCcommands STARTED;");
-
-	while (true)
-	{
-		dbg("1,PC>; ");
 
 
-		//osalSysDisable(); //disabilita Interupt
-//		chMtxLock(&mutexSerialPC);
-		cmdPC.feedinSerialData();  // Comando da pc ?, Se sì lo esegue
-//		chMtxUnlock(&mutexSerialPC);
-		//osalSysEnable();//abilita Interupt
+	//////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////
+	// thread   PCcommands - ricezione comandi da PC (per Debug)
+	//////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////
+	static THD_WORKING_AREA(waPCcommands, 100);
+	static THD_FUNCTION(thdPCcommands, arg) {
+		// Setup CommandMessenger -----------------------------------------------------
+		cmdPC.printLfCr();   // Adds newline to every command 
+		attachCommandCallbacks(&cmdPC);// Attach my application's user-defined callback methods
+		MSG("1,thdPCcommands STARTED;");
 
-
-		//yeld in base alla modalità operativa
-		if (robot.status.operatingMode == MODE_SLAVE) {
-			chThdSleepMilliseconds(500);// Sleep for n milliseconds.
-		}
-		else {
-			chThdSleepMilliseconds(1000);
-		}// Sleep for n milliseconds.
-
-	}
-}
-// invia un  messaggio con la descrizione dell'evento e lo resetta 
-void msgEventHR() {
-	if (robot.status.pendingEvents.bumperF) { MSG("bumperF  EVENT");robot.status.pendingEvents.bumperF = false; }
-	if (robot.status.pendingEvents.bumperL) { MSG("bumperL  EVENT");robot.status.pendingEvents.bumperL = false; }
-	if (robot.status.pendingEvents.bumperR) { MSG("bumperR  EVENT");robot.status.pendingEvents.bumperR = false; }
-	if (robot.status.pendingEvents.EncL) { MSG("EncL  EVENT");robot.status.pendingEvents.EncL = false; }
-	if (robot.status.pendingEvents.EncR) { MSG("EncR  EVENT");robot.status.pendingEvents.EncR = false; }
-	if (robot.status.pendingEvents.irproxyB) { MSG("irproxyB  EVENT");robot.status.pendingEvents.irproxyB = false; }
-	if (robot.status.pendingEvents.irproxyF) { MSG("irproxyF  EVENT");robot.status.pendingEvents.irproxyF = false; }
-	if (robot.status.pendingEvents.irproxyFH) { MSG("irproxyFH  EVENT");robot.status.pendingEvents.irproxyFH = false; }
-	if (robot.status.pendingEvents.irproxyL) { MSG("irproxyL  EVENT");robot.status.pendingEvents.irproxyL = false; }
-	if (robot.status.pendingEvents.irproxyR) { MSG("irproxyR  EVENT");robot.status.pendingEvents.irproxyR = false; }
-
-	if (robot.status.pendingEvents.pirDome) { MSG("pirDome  EVENT");robot.status.pendingEvents.pirDome = false; }
-	//if (robot.status.pendingEvents.analog[0]) { MSG("POT EVENT"); robot.status.pendingEvents.analog[0]= false;	}
-	//if (robot.status.pendingEvents.analog[2]) { MSG("LIGHT EVENT");robot.status.pendingEvents.analog[2]= false;	 }
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-
-}
-// se pending invia messaggio di evento su Batteria,luca e GPS
-void msgEventLR() {
-
-	if (robot.status.pendingEvents.batCharge) { MSG("BATTERY EVENT");robot.status.pendingEvents.batCharge= false;	 }
-	if (robot.status.pendingEvents.light) { MSG("light  EVENT"); robot.status.pendingEvents.light = false;}
-	if (robot.status.pendingEvents.gps) { MSG("GPS  EVENT"); robot.status.pendingEvents.gps = false;}
-
-}
-
-
-//////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-// thread   SendStatusHR - invia lo stato sui vari canali
-//////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-static THD_WORKING_AREA(waSendStatusHR, 100);
-static THD_FUNCTION(thdSendStatusHR, arg) {
-	while (true)
-	{
-		if (robot.status.pendingEvents.EventFlag)
+		while (true)
 		{
-			LEDTOP_B_ON;
-			// wait to enter print region
-			//chMtxLock(&mutexSerialMMI);
-			msgEventHR();
-
-			osalSysDisable(); //disabilita Interupt
-			onCmdGetSensorsHRate(&cmdMMI);
-			onCmdGetSensorsLRate(&cmdMMI);
-			osalSysEnable();//abilita Interupt
-
-			//chMtxUnlock(&mutexSerialMMI);
+			dbg("1,PC>; ");
 
 
-			//chMtxLock(&mutexSerialPC);
-			onCmdGetSensorsHRate(&cmdPC);
-			onCmdGetSensorsLRate(&cmdPC);
-			//chMtxUnlock(&mutexSerialPC);
+			//osalSysDisable(); //disabilita Interupt
+	//		chMtxLock(&mutexSerialPC);
+			cmdPC.feedinSerialData();  // Comando da pc ?, Se sì lo esegue
+	//		chMtxUnlock(&mutexSerialPC);
+			//osalSysEnable();//abilita Interupt
+
+
+			//yeld in base alla modalità operativa
+			if (robot.status.operatingMode == MODE_SLAVE) {
+				chThdSleepMilliseconds(500);// Sleep for n milliseconds.
+			}
+			else {
+				chThdSleepMilliseconds(1000);
+			}// Sleep for n milliseconds.
+
+		}
+	}
+	//////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////
+	// thread   SendStatusHR - invia lo stato sui vari canali
+	//////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////
+	static THD_WORKING_AREA(waSendStatusHR, 100);
+	static THD_FUNCTION(thdSendStatusHR, arg) {
+		while (true)
+		{
+			if (robot.status.pendingEvents.EventFlag)
+			{
+				LEDTOP_B_ON;
+				// wait to enter print region
+				//chMtxLock(&mutexSerialMMI);
+				msgEventHR();
+
+				osalSysDisable(); //disabilita Interupt
+				onCmdGetSensorsHRate(&cmdMMI);
+				onCmdGetSensorsLRate(&cmdMMI);
+				osalSysEnable();//abilita Interupt
+
+				//chMtxUnlock(&mutexSerialMMI);
+
+
+				//chMtxLock(&mutexSerialPC);
+				onCmdGetSensorsHRate(&cmdPC);
+				onCmdGetSensorsLRate(&cmdPC);
+				//chMtxUnlock(&mutexSerialPC);
+
+
+
+				LEDTOP_B_OFF
+
+			}
+
+			chThdSleepMilliseconds(800);// Sleep for n milliseconds.
+
+
+		}
+	}
+
+
+
+
+
+	//////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////
+	// thread   SendStatusLR - invia lo stato sui vari canali
+	//////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////
+	static THD_WORKING_AREA(waSendStatusLR, 200);
+	static THD_FUNCTION(thdSendStatusLR, arg) {
+
+		//chMtxLock(&mutexSerialMMI); //si blocca finchè la seriale è in uso da un altro thread
+		//onCmdGetSensorsLRate(&cmdMMI);
+		//chMtxUnlock(&mutexSerialMMI);
+
+		//chMtxLock(&mutexSerialPC); //si blocca finchè la seriale è in uso da un altro thread
+		//onCmdGetSensorsLRate(&cmdPC);
+		//chMtxUnlock(&mutexSerialPC);
+
+		while (true)
+		{
+			LEDTOP_B_ON
+				if ((robot.status.operatingMode == MODE_AUTONOMOUS) &&
+			 ( robot.status.pendingEvents.light
+				|| robot.status.pendingEvents.batCharge
+				|| robot.status.pendingEvents.gps
+				))
+			{
+					//osalSysDisable(); //disabilita Interupt
+					// wait to enter print region
+					//chMtxLock(&mutexSerialMMI);
+					msgEventLR();
+
+
+				robot.status.pendingEvents.gps = false;
+				robot.status.pendingEvents.batCharge = false;
+				robot.status.pendingEvents.light = false;
+
+				//		chMtxLock(&mutexSerialMMI); //si blocca finchè la seriale è in uso da un altro thread
+				onCmdGetSensorsLRate(&cmdMMI);
+				//		chMtxUnlock(&mutexSerialMMI);
+
+				//		chMtxLock(&mutexSerialPC); //si blocca finchè la seriale è in uso da un altro thread
+				onCmdGetSensorsLRate(&cmdPC);
+				//		chMtxUnlock(&mutexSerialPC);
+
+			}
 
 
 
 			LEDTOP_B_OFF
 
+			//yeld in base alla modalità operativa
+			if (robot.status.operatingMode == MODE_AUTONOMOUS) {
+				#ifdef DEBUG_ON
+					chThdSleepMilliseconds(2000);// Sleep for n milliseconds.
+				#else
+					chThdSleepMilliseconds(5000);// Sleep for n milliseconds.
+				#endif
+			}
+			else { //SLEEP TIME IN MODALITA' SLAVE O JOISTICK
+				#ifdef DEBUG_ON
+					chThdSleepMilliseconds(2000);// Sleep for n milliseconds.
+				#else
+					chThdSleepMilliseconds(15000);// Sleep for n milliseconds.
+				#endif
+			}
+
+
 		}
-
-		chThdSleepMilliseconds(800);// Sleep for n milliseconds.
-
-
 	}
-}
 
-//////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-// thread   SendStatusLR - invia lo stato sui vari canali
-//////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-static THD_WORKING_AREA(waSendStatusLR, 200);
-static THD_FUNCTION(thdSendStatusLR, arg) {
 
-	//chMtxLock(&mutexSerialMMI); //si blocca finchè la seriale è in uso da un altro thread
-	//onCmdGetSensorsLRate(&cmdMMI);
-	//chMtxUnlock(&mutexSerialMMI);
 
-	//chMtxLock(&mutexSerialPC); //si blocca finchè la seriale è in uso da un altro thread
-	//onCmdGetSensorsLRate(&cmdPC);
-	//chMtxUnlock(&mutexSerialPC);
 
-	while (true)
+	//////////////////////////////////////////////////////////////////////////////////
+	//  THREAD  B R A I N      ///////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////
+	#pragma region  Processo	B R A I N    
+	static THD_WORKING_AREA(waBrain, 100);
+	static THD_FUNCTION(thdBrain, arg)
 	{
-		LEDTOP_B_ON
-			if ((robot.status.operatingMode == MODE_AUTONOMOUS) &&
-		 ( robot.status.pendingEvents.light
-			|| robot.status.pendingEvents.batCharge
-			|| robot.status.pendingEvents.gps
-			))
-		{
-				//osalSysDisable(); //disabilita Interupt
-				// wait to enter print region
-				//chMtxLock(&mutexSerialMMI);
-				msgEventLR();
+		// Setup CommandMessenger -----------------------------------------------------
+		cmdMMI.printLfCr();   // Adds newline to every command 
+		attachCommandCallbacks(&cmdMMI);// Attach my application's user-defined callback methods
 
+		int sleepTime = 500;
+		const int FWDIST = 10; //distanza avanzamento
+		int alfa = 0;
+		int cmDone = 0; // percorso eseguito a valle di un comando moveCm o RotateDeg
+		int stuckCount = 0;
 
-			robot.status.pendingEvents.gps = false;
-			robot.status.pendingEvents.batCharge = false;
-			robot.status.pendingEvents.light = false;
-
-			//		chMtxLock(&mutexSerialMMI); //si blocca finchè la seriale è in uso da un altro thread
-			onCmdGetSensorsLRate(&cmdMMI);
-			//		chMtxUnlock(&mutexSerialMMI);
-
-			//		chMtxLock(&mutexSerialPC); //si blocca finchè la seriale è in uso da un altro thread
-			onCmdGetSensorsLRate(&cmdPC);
-			//		chMtxUnlock(&mutexSerialPC);
-
-		}
-
-
-
-		LEDTOP_B_OFF
-
-		//yeld in base alla modalità operativa
-		if (robot.status.operatingMode == MODE_AUTONOMOUS) {
-			#ifdef DEBUG_ON
-				chThdSleepMilliseconds(2000);// Sleep for n milliseconds.
-			#else
-				chThdSleepMilliseconds(5000);// Sleep for n milliseconds.
-			#endif
-		}
-		else { //SLEEP TIME IN MODALITA' SLAVE O JOISTICK
-			#ifdef DEBUG_ON
-				chThdSleepMilliseconds(2000);// Sleep for n milliseconds.
-			#else
-				chThdSleepMilliseconds(15000);// Sleep for n milliseconds.
-			#endif
-		}
-
-
-	}
-}
-
-//////////////////////////////////////////////////////////////////////////////////
-//  THREAD  B R A I N      ///////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////
-#pragma region  Processo	B R A I N    
-static THD_WORKING_AREA(waBrain, 100);
-static THD_FUNCTION(thdBrain, arg)
-{
-	// Setup CommandMessenger -----------------------------------------------------
-	cmdMMI.printLfCr();   // Adds newline to every command 
-	attachCommandCallbacks(&cmdMMI);// Attach my application's user-defined callback methods
-
-	int sleepTime = 500;
-	const int FWDIST = 10; //distanza avanzamento
-	int alfa = 0;
-	int cmDone = 0; // percorso eseguito a valle di un comando moveCm o RotateDeg
-	int stuckCount = 0;
-
-	//1)inizializzo i sensori e le variabili
-	int pingCm = 0;
-	int ldsmm = 0;
-	int estimatedDistCm = 0;
+		//1)inizializzo i sensori e le variabili
+		int pingCm = 0;
+		int ldsmm = 0;
+		int estimatedDistCm = 0;
  
-	MSG2("OPMODE..",(int)robot.status.operatingMode);
+		MSG2("OPMODE..",(int)robot.status.operatingMode);
 
-	robot.status.cmd.commandDir = commandDir_e::GOR;
+		robot.status.cmd.commandDir = commandDir_e::GOR;
 
-	while (1)
-	{
-		LEDTOP_G_ON
-		switch (robot.status.operatingMode)
+		while (1)
 		{
-		case operatingMode_e::MODE_SLAVE:
-			#pragma region SLAVE
+			LEDTOP_G_ON
+			switch (robot.status.operatingMode)
+			{
+			case operatingMode_e::MODE_SLAVE:
+				#pragma region SLAVE
 
-				MSG("B s>")
+					MSG("B s>")
 
-///				osalSysDisable(); //disabilita Interupt
-				cmdMMI.feedinSerialData(); // Comando da interfaccia MMI ?, Se sì lo esegue
-//				osalSysEnable();//abilita Interupt
-
-
-				//Invia i dati dei sensori se cambia qualcosa
-				if (robot.raiseEvents()) {
-
-					msgEventHR();
-					msgEventLR();
-					robot.resetEvents();
-				}
-				//MSG(" okei comanda");
-				sleepTime = 1000;
-				break;
-			#pragma endregion
-
-		case	operatingMode_e::MODE_AUTONOMOUS:
-
-		#pragma region AUTONOMOUS
-			sleepTime = 2000;
-			MSG("B A>")
+	///				osalSysDisable(); //disabilita Interupt
+					cmdMMI.feedinSerialData(); // Comando da interfaccia MMI ?, Se sì lo esegue
+	//				osalSysEnable();//abilita Interupt
 
 
-			onCmdGetSensorsHRate(&cmdMMI);
-			onCmdGetSensorsHRate(&cmdPC);
-			onCmdGetSensorsLRate(&cmdMMI);
-			onCmdGetSensorsLRate(&cmdPC);
-			onCmdGetProxy(&cmdMMI);
+					//Invia i dati dei sensori se cambia qualcosa
+					if (robot.raiseEvents()) {
 
-			// ////////////////////////////////////////////////////////////////////////////////
-			/// ///////////////////////////////////////////////////////////////////////////////
-			//  Esplora
-			/// ///////////////////////////////////////////////////////////////////////////////
-			// ////////////////////////////////////////////////////////////////////////////////
-			#pragma region ESPLORA
-			#if 0
+						msgEventHR();
+						msgEventLR();
+						robot.resetEvents();
+					}
+					//MSG(" okei comanda");
+					sleepTime = 1000;
+					break;
+				#pragma endregion
 
-						MSG("BE>")
+			case	operatingMode_e::MODE_AUTONOMOUS:
 
-							TOGGLEPIN(Pin_LED_TOP_B);
-						robot.status.parameters.sonarStartAngle = 0;
-						robot.status.parameters.sonarEndAngle = 180;
-						robot.status.parameters.sonarStepAngle = 30;
-						robot.status.parameters.sonarScanSweeps = 1;
-						robot.status.parameters.sonarMedianSamples = 2;
-						robot.status.parameters.sonarScanSpeed = 30; // map(analogRead(Pin_AnaPot1), 0, 1023, 10, 500);  //was = 30 ms di attesa tra due posizioni
+			#pragma region AUTONOMOUS
+				sleepTime = 2000;
+				MSG("B A>")
 
-						robot.LDSScanBatch();
-						alfa = 90 - robot.status.parameters.SonarMaxDistAngle;
-						alfa = 30;
-						MSG2("Max dist @alfa:", alfa);
-						MSG2("Max dist cm:", robot.status.parameters.sonarMaxDistance)
-							TOGGLEPIN(Pin_LED_TOP_B);
 
-						// invia i dati Sonar all'Host
-						//onCmdSonarSendData(&cmdMMI);
-						TOGGLEPIN(Pin_LED_TOP_B);
+				onCmdGetSensorsHRate(&cmdMMI);
+				onCmdGetSensorsHRate(&cmdPC);
+				onCmdGetSensorsLRate(&cmdMMI);
+				onCmdGetSensorsLRate(&cmdPC);
+				onCmdGetProxy(&cmdMMI);
 
-						///osalSysDisable();
-						robot.rotateDeg(alfa);
-						osalSysEnable();
-						cmDone = robot.moveCm(robot.status.parameters.sonarMaxDistance);	// avanti
-						if (cmDone < (robot.status.parameters.sonarMaxDistance - 1))	//ostacolo ?
-						{
-							MSG("Obstacle!");
-							robot.moveCm(-FWDIST);	// torna indietro
-							TOGGLEPIN(Pin_LED_TOP_B);
-							stuckCount++;
-							if (stuckCount > 2)
-							{
-								robot.rotateDeg(180); //inverto la direzione
+				// ////////////////////////////////////////////////////////////////////////////////
+				/// ///////////////////////////////////////////////////////////////////////////////
+				//  Esplora
+				/// ///////////////////////////////////////////////////////////////////////////////
+				// ////////////////////////////////////////////////////////////////////////////////
+				#pragma region ESPLORA
+				#if 0
+
+							MSG("BE>")
+
 								TOGGLEPIN(Pin_LED_TOP_B);
+							robot.status.parameters.sonarStartAngle = 0;
+							robot.status.parameters.sonarEndAngle = 180;
+							robot.status.parameters.sonarStepAngle = 30;
+							robot.status.parameters.sonarScanSweeps = 1;
+							robot.status.parameters.sonarMedianSamples = 2;
+							robot.status.parameters.sonarScanSpeed = 30; // map(analogRead(Pin_AnaPot1), 0, 1023, 10, 500);  //was = 30 ms di attesa tra due posizioni
+
+							robot.LDSScanBatch();
+							alfa = 90 - robot.status.parameters.SonarMaxDistAngle;
+							alfa = 30;
+							MSG2("Max dist @alfa:", alfa);
+							MSG2("Max dist cm:", robot.status.parameters.sonarMaxDistance)
+								TOGGLEPIN(Pin_LED_TOP_B);
+
+							// invia i dati Sonar all'Host
+							//onCmdSonarSendData(&cmdMMI);
+							TOGGLEPIN(Pin_LED_TOP_B);
+
+							///osalSysDisable();
+							robot.rotateDeg(alfa);
+							osalSysEnable();
+							cmDone = robot.moveCm(robot.status.parameters.sonarMaxDistance);	// avanti
+							if (cmDone < (robot.status.parameters.sonarMaxDistance - 1))	//ostacolo ?
+							{
+								MSG("Obstacle!");
+								robot.moveCm(-FWDIST);	// torna indietro
+								TOGGLEPIN(Pin_LED_TOP_B);
+								stuckCount++;
+								if (stuckCount > 2)
+								{
+									robot.rotateDeg(180); //inverto la direzione
+									TOGGLEPIN(Pin_LED_TOP_B);
+									stuckCount = 0;
+								}
+							}
+							else //nessun ostacolo, azzero il contatore
+							{
 								stuckCount = 0;
 							}
-						}
-						else //nessun ostacolo, azzero il contatore
-						{
-							stuckCount = 0;
-						}
-						TOGGLEPIN(Pin_LED_TOP_B);
+							TOGGLEPIN(Pin_LED_TOP_B);
 
 
-						sleepTime = 1500;	// Sleep for 150 milliseconds.
+							sleepTime = 1500;	// Sleep for 150 milliseconds.
 
 
 
-			#endif // 0
-					//  return 0;
+				#endif // 0
+						//  return 0;
+				#pragma endregion
+				#if 0//test che funzionino i sensori e movimento in ambiente chibios
+
+							LASER_ON
+
+
+							robot.go(robot.status.cmd.commandDir, robotSpeed_e::SLOW);// non bloccante
+							MSG("MOTORI ATTIVATI")
+								////2)avvio la rotazione del robot
+								//osalSysDisable();
+								////loop
+								//while (true)
+								//{
+								//	// leggo LDS,sonar,heading
+									robot.status.posCurrent.r = compass.getBearing();
+									pingCm = robot.sonarPing();
+									ldsmm = LDS.readRangeSingleMillimeters();
+									if (!LDS.timeoutOccurred()) {
+										estimatedDistCm = ldsmm / 10;
+									}
+									else //uso il sonar
+									{
+										estimatedDistCm = pingCm;
+									}
+									//invio i dati
+									onCmdGetPose(&cmdMMI);
+									MSG3("Dist: ", estimatedDistCm, "cm")
+										//MSG3("Compass: ",robot.status.posCurrent.r,"°")
+										//MSG3("lds: ",ldsmm, "mm")
+										//	MSG3("Ping: ",pingCm, "cm")
+								//}
+								//osalSysEnable();
+
+				#endif // TEST_ALL			#pragma region ESPLORA2
+
+
+
+					break;
+
 			#pragma endregion
-			#if 0//test che funzionino i sensori e movimento in ambiente chibios
 
-						LASER_ON
-
-
-						robot.go(robot.status.cmd.commandDir, robotSpeed_e::SLOW);// non bloccante
-						MSG("MOTORI ATTIVATI")
-							////2)avvio la rotazione del robot
-							//osalSysDisable();
-							////loop
-							//while (true)
-							//{
-							//	// leggo LDS,sonar,heading
-								robot.status.posCurrent.r = compass.getBearing();
-								pingCm = robot.sonarPing();
-								ldsmm = LDS.readRangeSingleMillimeters();
-								if (!LDS.timeoutOccurred()) {
-									estimatedDistCm = ldsmm / 10;
-								}
-								else //uso il sonar
-								{
-									estimatedDistCm = pingCm;
-								}
-								//invio i dati
-								onCmdGetPose(&cmdMMI);
-								MSG3("Dist: ", estimatedDistCm, "cm")
-									//MSG3("Compass: ",robot.status.posCurrent.r,"°")
-									//MSG3("lds: ",ldsmm, "mm")
-									//	MSG3("Ping: ",pingCm, "cm")
-							//}
-							//osalSysEnable();
-
-			#endif // TEST_ALL			#pragma region ESPLORA2
-
-
-
+			case operatingMode_e::MODE_JOYSTICK:
+				//MSG(" okei comanda col gioistic");
+				sleepTime = 5000;
 				break;
 
-		#pragma endregion
+			default:
+				MSG(" modo sconosciuto");
+				sleepTime = 2000;
+				break;
 
-		case operatingMode_e::MODE_JOYSTICK:
-			//MSG(" okei comanda col gioistic");
-			sleepTime = 5000;
-			break;
-
-		default:
-			MSG(" modo sconosciuto");
-			sleepTime = 2000;
-			break;
-
-		}
+			}
 
  
 
 
 
-		LEDTOP_G_OFF
+			LEDTOP_G_OFF
 
-		chThdSleepMilliseconds(sleepTime);//	chThdYield();//	
+			chThdSleepMilliseconds(sleepTime);//	chThdYield();//	
 
+		}
 	}
-}
-#pragma endregion 
+	#pragma endregion 
 
 
+#endif // OPT_CMDMMI
 
 
 
@@ -845,6 +929,71 @@ static THD_FUNCTION(thdBrain, arg)
 //////////////////////////////////////////////////////////////////////////////////
 #pragma region THREAD NON ATTIVI
 #if 0
+
+	//////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////
+	// thread 1		- Esplora
+	//////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////
+
+	static THD_WORKING_AREA(waThreadEsplora, 400);
+	static THD_FUNCTION(ThreadEsplora, arg) {
+		const int FWDIST = 10;
+		int alfa = 0;
+		int cmDone = 0; // percorso eseguito a valle di un comando moveCm o RotateDeg
+		int stuckCount = 0;
+
+		while (robot.status.operatingMode == AUTONOMOUS)
+		{
+
+			TOGGLEPIN(Pin_LED_TOP_B);
+			robot.status.parameters.sonarStartAngle = 0;
+			robot.status.parameters.sonarEndAngle = 180;
+			robot.status.parameters.sonarStepAngle = 30;
+			robot.status.parameters.sonarScanSweeps = 1;
+			robot.status.parameters.sonarMedianSamples = 2;
+			robot.status.parameters.sonarScanSpeed = 30; // map(analogRead(Pin_AnaPot1), 0, 1023, 10, 500);  //was = 30 ms di attesa tra due posizioni
+
+			robot.SonarScanBatch(&servoSonar, &Sonar);
+			alfa = 90 - robot.status.parameters.SonarMaxDistAngle;
+			SERIAL_MSG.print("Max dist @alfa:"); SERIAL_MSG.println(alfa);
+			dbg2("Max dist cm:", robot.status.parameters.sonarMaxDistance)
+				TOGGLEPIN(Pin_LED_TOP_B);
+
+			// invia i dati Sonar
+			kbSonarSendData(&cmdMMI);
+			TOGGLEPIN(Pin_LED_TOP_B);
+
+
+			robot.rotateDeg(alfa);
+			cmDone = robot.moveCm(robot.status.parameters.sonarMaxDistance);	// avanti
+			if (cmDone < (robot.status.parameters.sonarMaxDistance - 1))	//ostacolo ?
+			{
+				SERIAL_MSG.println("1,Obst!;");
+				robot.moveCm(-FWDIST);	// torna indietro
+				TOGGLEPIN(Pin_LED_TOP_B);
+				stuckCount++;
+				if (stuckCount > 2)
+				{
+					robot.rotateDeg(180); //inverto la direzione
+					TOGGLEPIN(Pin_LED_TOP_B);
+					stuckCount = 0;
+				}
+			}
+			else //nessun ostacolo, azzero il contatore
+			{
+				stuckCount = 0;
+			}
+			TOGGLEPIN(Pin_LED_TOP_B);
+
+
+			chThdSleepMilliseconds(1500);	// Sleep for 150 milliseconds.
+
+		}
+		//  return 0;
+	}
+
+
 	//////////////////////////////////////////////////////////////////////////////////
 	//  blinking LED       ///////////////////////////////////////////////////////////
 	//////////////////////////////////////////////////////////////////////////////////
@@ -900,6 +1049,11 @@ static THD_FUNCTION(thdScan, arg) {
 #endif // 0
 #pragma endregion
 
+#pragma endregion
+// ////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
 
 // ////////////////////////////////////////////////////////////////////////////////////////////
 // OS Setup (non cambia se non si aggiungono task)
@@ -910,27 +1064,19 @@ extern unsigned int __bss_end;
 extern unsigned int __heap_start;
 extern void *__brkval;
 
-uint16_t getFreeSram() {
-	uint8_t newVariable;
-	// heap is empty, use bss as start memory address 
-	if ((uint16_t)__brkval == 0)
-		return (((uint16_t)&newVariable) - ((uint16_t)&__bss_end));
-	// use heap end as the start of the memory address 
-	else
-		return (((uint16_t)&newVariable) - ((uint16_t)__brkval));
-};
-
+ 
 void thdSetup() {
 	// fill pool with msgObjArray array
 	//for (size_t i = 0; i < MBOX_COUNT; i++) {
 	//	chPoolFree(&memPool, &msgObjArray[i]);
 	//}
-
+	
+	chThdCreateStatic(waRosPublishLaserScan, sizeof(waRosPublishLaserScan), NORMALPRIO + 6, thdRosPublishLaserScan, NULL);
 	//chThdCreateStatic(waSafety, sizeof(waSafety), NORMALPRIO +10, thdSafety, NULL);
 	chThdCreateStatic(waReadSensorsLR, sizeof(waReadSensorsLR), NORMALPRIO + 6, thdReadSensorsLR, NULL);
 	//chThdCreateStatic(waRos, sizeof(waRos), NORMALPRIO + 6, thdRos, NULL);
 	chThdCreateStatic(waReadSensorsHR, sizeof(waReadSensorsHR), NORMALPRIO + 5, thdReadSensorsHR, NULL);
-	chThdCreateStatic(waBrain, sizeof(waBrain), NORMALPRIO + 5, thdBrain, NULL);
+//	chThdCreateStatic(waBrain, sizeof(waBrain), NORMALPRIO + 5, thdBrain, NULL);
 	//chThdCreateStatic(waSendStatusHR, sizeof(waSendStatusHR), NORMALPRIO +4, thdSendStatusHR, NULL);
 	//chThdCreateStatic(waSendStatusLR, sizeof(waSendStatusLR), NORMALPRIO +4, thdSendStatusLR, NULL);
 	//chThdCreateStatic(waPCcommands, sizeof(waPCcommands), NORMALPRIO + 3, thdPCcommands, NULL);
@@ -943,13 +1089,23 @@ void thdSetup() {
 
 }
 
+
+
+
+
+// ########################################################################################
+// ########################################################################################
+// ENCODER ISR
+// opera solo se  targetEncoderThicks > 0 ed ogni ISR_MINMUM_INTERVAL_MSEC
+// ########################################################################################
+// ########################################################################################
 // Interrupt service routines for the right motor's quadrature encoder
 volatile bool interruptFlag = false;
 volatile uint32_t robotstatussensorsEncR = 0;
 volatile unsigned long isrCurrCallmSec = 0;
 volatile unsigned long isrLastCallmSec = 0;
 
-#define ISR_MINMUM_INTERVAL_MSEC 25  // 30 = circa ROBOT_MOTOR_STEPS_PER_ENCODERTICK * ROBOT_MOTOR_STEPS_PER_ENCODERTICK
+#define ISR_MINMUM_INTERVAL_MSEC 15  // 30 = circa ROBOT_MOTOR_STEPS_PER_ENCODERTICK * ROBOT_MOTOR_STEPS_PER_ENCODERTICK
 void ISRencoder()
 {
 	if (robot.status.cmd.targetEncoderThicks > 0) //faccio lavorare l'ISR solo se targetEncoderThicks> 0
@@ -982,7 +1138,7 @@ void ISRencoder()
 // ########################################################################################
 void setup()
 {
-	//lampeggiaLed(Pin_LED_TOP_R, 3, 5);
+	lampeggiaLed(Pin_LED_TOP_R, 3, 9);
 	//lampeggiaLed(Pin_LED_TOP_G, 3, 5);
 	//lampeggiaLed(Pin_LED_TOP_B, 3, 5);
 	LEDTOP_R_ON	// Indica inizio SETUP Phase
@@ -1033,9 +1189,9 @@ void setup()
 	robot.initCompass(&compass);//include compass.begin();
 #endif
 #if OPT_STEPPERLDS
+	myStepperLDS.goRadsPerSecond(0.1);
+	myStepperLDS.enable();
 
-
-	robot.initRobot( &myLDSstepper);
 #endif
 #if OPT_MPU6050
 
@@ -1060,6 +1216,8 @@ void setup()
 
 
 	MSG("ACCENDI I MOTORI");
+	countDown(5);
+
 //	LEDTOP_G_ON	// Indica inizio SETUP Phase
 
 
@@ -1088,26 +1246,16 @@ void setup()
 	LEDTOP_R_ON
 	
 
-	#define STARTING_HEADING 90
-	MSG2("## goHeading :", STARTING_HEADING);
-	robot.stop();
-	//MOTORS_DISABLE
-	robot.status.sensors.EncR = 0;//resetto il conteggio encoder ticks
-	robot.status.cmd.targetEncoderThicks = 0;
-	robot.goHeading(STARTING_HEADING, 5);
-	LEDTOP_R_OFF
+	//#define HOME_HEADING 90
+	//MSG2("## goHeading :", HOME_HEADING);
+	//robot.stop();
+	////MOTORS_DISABLE
+	//robot.status.sensors.EncR = 0;//resetto il conteggio encoder ticks
+	////robot.status.cmd.targetEncoderThicks = 0;
+	//robot.goHeading(HOME_HEADING, 5);
+	//LEDTOP_R_OFF
 
-#if 0
-		for (size_t i = 0; i < 5; i++)
-		{
-			MSG2("LDS cm: ", robot.getLDSDistanceCm());
-			MSG2("         alfa: ", robot.readCompassDeg());
-			delay(500);
-		}
 
-	delay(5000);
-
-#endif // 0
 
 	// ########################################################################################
 	// ########################################################################################
@@ -1118,7 +1266,7 @@ void setup()
 	#pragma region TEST OPZIONALI PRIMA DELL'AVVIO DELL'OS
 			int targetAngle = 0;
 			int freeDistCm = 0;
-			char charVal[10];
+			char* charVal ;
 
 		// test IMU
 		#if 0
@@ -1165,126 +1313,6 @@ void setup()
 				
 		#endif // 1
 
-		// test LDS
-		#if 0
-			while (true){
-				angle = robot.goCWAndScanDeg(360);
-				delay(1000);
-				robot.goHeading(angle,3);
-
-
-
-				delay(5000);
-
-			}
-				
-		#endif // 1
-		#if 0
-			while (true){
-				MSG2("Angle with max FreeDist: ",robot.goCWAndScanDeg(360 ) );
-					delay(2000);
-				MSG2("Angle with max FreeDist: ",robot.goCWAndScanDeg(-360) );
-					delay(2000);
-
-			}
-				
-		#endif // 1
-
-
-		// test ESPLORA
-		#if 0
-			int backDist = 10; // quanto va indietro quando trova ostacolo
-			int movedmm = 0;
-			int minFreeDistCm = 10;
-			int nextRotCw = -1;
-			robot.status.sensors.ignoreIR = true; //usato da isObstacleFreeIR()
-			while (true)
-			{
-				LEDTOP_B_ON
-				nextRotCw *= -1; //inverto il senso di rotazione
-				// cerco l'angolo con il maggior perccorso libero
-				targetAngle =robot.goCWAndScanDeg(nextRotCw*180);
-				delay(1000); //per debug
-
-				MSG("----------");
-				MSG2("FreeDist : ", freeDistCm);
-				MSG2("  AT Alfa:", targetAngle);
-				MSG("----------");
-				LEDTOP_B_OFF
-
-				LEDTOP_G_ON
-				// ruoto fino all'angolo
-				robot.goHeading(targetAngle);//robot.rotateDeg(deltaAngle);
-				MSG2("FreeDist: ", freeDistCm);
-				delay(1000); //per debug
-				//// mi metto in moto
-				//robot.go(commandDir_e::GOF, robotSpeed_e::MEDIUM);
-				//freeDistCm = robot.status.sensors.ldsEchos_cm[targetAngle];
-				////
-				//while (robot.isObstacleFreeBumpers() && (freeDistCm>5) )
-				//{
-				//	freeDistCm= robot.getLDSDistanceCm();
-				//	robot.readBumpers();
-
-				//}
-
-				LEDTOP_G_OFF
-
-					////avanti è abbastanza libero ?
-				movedmm = robot.moveCm(freeDistCm );
-				MSG3("Moved: ", movedmm, "mm");
-
-					//ho incontrato ostacolo?
-					if ((movedmm < 100)||(movedmm < 10*(freeDistCm - backDist)))
-					{
-						//sì torno indietro
-
-						robot.moveCm(-backDist);
-						LEDTOP_R_ON
-
-						if ((robot.status.sensors.bumper.left)||(robot.status.sensors.irproxy.fl)) //ostacolo a sinistra
-						{
-
-							robot.goCWUntilMinFreeDist(50);
-							//angle = robot.goCWAndScan(10, true);
-							//robot.goHeading(angle);
-
-						}
-						else if ((robot.status.sensors.bumper.right) || (robot.status.sensors.irproxy.fr))
-						{
-							robot.goCWUntilMinFreeDist(-50);
-							//angle = robot.goCWAndScan(10, false);
-							//robot.goHeading(angle);
-
-						}
-						//robot.rotateDeg(nextRotCw*20);
-						robot.moveCm(robot.getLDSDistanceCm() - backDist);
-						//minFreeDistCm -= max(minFreeDistCm-20,20);
-
-
-						LEDTOP_R_OFF
-
-					}
-					else //no ostacolo
-					{
-						//minFreeDistCm = min(200, freeDistCm + 20);
-						//LEDTOP_B_ON
-
-					}
-				//}
-				//else 
-				//{
-				//	// no
-				//	robot.moveCm(-backDist);
-				//	//robot.goCWUntilMinFreeDist(minFreeDistCm);
-				//	//robot.rotateDeg(nextRotCw*20);
-				//	// path libero > incremento
-
-				//}
-
-			}
-		#endif // 1
-
 
 		//TEST_COMPASS_3   ### BLOCCANTE ###
 		#if 1		//calibra  e poi ruota verso Nord
@@ -1295,251 +1323,41 @@ void setup()
 
 			MSG("Test GO 1 giro....")
 			//robot.goCWAndScan(20);
-			long targetRads = 2 * PI; //un giro
-			robot.status.cmd.targetEncoderThicks = targetRads *  ROBOT_MOTOR_STEPS_PER_RADIANT /  ROBOT_MOTOR_STEPS_PER_ENCODERTICK;
-			MSG2("Target Enc.", robot.status.cmd.targetEncoderThicks);
+			long targetRads =2* PI; //target in radianti
+			robot.status.cmd.targetEncoderThicks = 4375 / ROBOT_MOTOR_STEPS_PER_ENCODERTICK;// targetRads *  ROBOT_MOTOR_STEPS_PER_RADIANT / ROBOT_MOTOR_STEPS_PER_ENCODERTICK;
+			dtostrf(robot.status.cmd.targetEncoderThicks, 2, 10, charVal);
+			MSG2("Target Enc.", charVal);
+			countDown(5);
 
 			robot.go(commandDir_e::GOR, robotSpeed_e::MEDIUM);
-			countDown(5);
-
+			STEPPERLDS_ON;
+			myStepperLDS.enable();
+			myStepperLDS.goRadsPerSecond(0.314);// 10" per 180°
 			while (true)
 			{
 				MSG2("Enc R.", robot.status.sensors.EncR);
-				MSG2("LDS.", robot.getLDSDistanceCm());
+				MSG2("Compass deg.", robot.readCompassDeg());
+
+				STEPPERLDS_INVERTDIR;
+				for (size_t i = 0; i < 100; i++)
+				{
+					STEPPERLDS_STEP;
+					delay(1000/20);
+					MSG2("  i: ", i);
+					MSG2("LDS.", robot.getLDSDistanceCm());
+				}
+
 				delay(1000);
+				
+				// abilita stepper LDS
+
 
 			}
-
-/*
-			long targetRads = 2 * PI; //un giro
-			robot.status.cmd.targetEncoderThicks = targetRads *  ROBOT_MOTOR_STEPS_PER_RADIANT /  ROBOT_MOTOR_STEPS_PER_ENCODERTICK;
-			MSG2("Target Enc.", targetEncoderTicks);
-
-			// per il tempo a disposizione...
-			while (robot.status.sensors.EncR < targetEncoderTicks) //tempo sufficiente per fare almeno un giro
-			{
-				// rilevo distanza e angolo
-				MSG2("Enc R.", robot.status.sensors.EncR);
-				delay(500);
-			}
-			
-			robot.stop();
-
-			MSG("..End Scan");
-*/
-		#endif // COMPASS
+			STEPPERLDS_OFF
 
 
+		#endif  
 
-		//TEST_COMPASS_2   ### BLOCCANTE ###
-		#if 0		//calibra  e poi ruota verso Nord
-			// Initialise the sensor 
-				robot.stop();
-			MSG("CALIBRAZIONE COMPASS. Accendere i motori......")
-			countDown(5);
-			robot.compassCalibrate();
-
-			// al termine della calibrazione faccio puntare il robot ai 4 punti cardinali
-			MSG("Ora punto a nord DOPO CALIBRAZIONE ...")
-			robot.goHeading(0,3);
-			MSG("**********Arrivato********");
-			MSG3("Bearing di arrivo: ", compass.getBearing(), "°");
-
-			while (true) {
-				TOGGLEPIN(Pin_LED_TOP_G);
-				delay(300);
-			}
-		#endif // COMPASS
-
-		// TEST SONAR
-		#if 0	
-			MSG("SONAR ONLY TEST..");
-			for (size_t i = 0; i < 5; i++)		//		while (true)
-			{
-				TOGGLEPIN(Pin_LaserOn);
-				MSG3("Ping: ", robot.sonarPing(), "cm");
-				delay(300);
-			}
-		#endif // 0
-
-		// ruota finchè non trova davanti una distanza minima libera
-		#if 0 		
-			MSG("goCWUntilMinFreeDist..")
-			robot.status.sensors.sonarEchos[90] = robot.goCWUntilMinFreeDist(200);
-			MSG2("dist found cm:", robot.status.sensors.sonarEchos[90]);
-		#endif
-
-		// RUOTA con velocità crescente 1 secondo ogni step
-		#if 1
-		
-			// Attenzione !! Se presente un altro tone() non funziona
-			robot.stop();
-			MSG("TEST robot.go()..")
-			MSG("PLEASE SWITCH MOTORS ON")
-			MSG("DISCONNECT CABLES")
-			MSG("Start test in 10 secondi...")
-			countDown(10);
-			int ck = ROBOT_MOTOR_CLOCK_microsecondMAX;
-			bool cont = true;
-			while (robot.isObstacleFreeBumpers())
-			{
-				MSG2("Current ck:", ck)
-				robot.go(commandDir_e::GOR, ck);
-				delay(1000);
-				ck -= 200;
-				if (ck < ROBOT_MOTOR_CLOCK_microsecondMIN)
-				{
-					//torno indietro per 3 secondi a velocità media
-					robot.stop();
-					robot.go(commandDir_e::GOL, robotSpeed_e::MEDIUM);
-					delay(3000);
-					cont = false;
-				}
-				robot.readBumpers();
-			}
-
-			MSG("Fine test......");
-			robot.stop();
-			//while (true) {}
-
-		#endif // 0
-
- 
-		// I2C Scanner	 
-		#if 0		
-
-
-			byte error, address;
-			int nDevices;
-
-			Serial.println("Scanning...");
-
-			nDevices = 0;
-			for (address = 1; address < 127; address++)
-			{
-				// The i2c_scanner uses the return value of
-				// the Write.endTransmisstion to see if
-				// a device did acknowledge to the address.
-				error = I2c.write(address, 0);
-
-
-				if (error == 0)
-				{
-					Serial.print("I2C device found at address 0x");
-					if (address < 16)
-						Serial.print("0");
-					Serial.print(address, HEX);
-					Serial.println("  !");
-
-					nDevices++;
-				}
-				else if (error == 4)
-				{
-					Serial.print("Unknow error at address 0x");
-					if (address < 16)
-						Serial.print("0");
-					Serial.println(address, HEX);
-				}
-			}
-			if (nDevices == 0)
-				Serial.println("No I2C devices found\n");
-			else
-				Serial.println("done\n");
-
-			delay(5000);           // wait 5 seconds for next scan
-
-		#endif 
-
-		// TEST_GPS 
-		#if 0
-		//CHIAVARI LAT	44.326953 LONG 9.289679
-
-		#endif 
-
-
-		// TEST_SPEECH
-		#if 0		 
-			SERIAL_MSG.println(F("1,test Speak;"));
-			SERIAL_MMI.println(F("28,CIAO CIAO;"));
-		#endif // TEST_SPEECH
-
-
-		//test ixproxy
-		#if 0	
-			SERIAL_MSG.print(F("1,testing ixproxy...;"));
-			while (true)
-			{
-				robot.readSensors();
-				if (robot.status.sensors.irproxy.fw != robot.statusOld.sensors.irproxy.fw)
-				{
-					SERIAL_MSG.println(F("1,irproxy.fw changed;"));
-					TOGGLEPIN(Pin_LED_TOP_B);
-
-				}
-				else if (robot.status.sensors.irproxy.fwHL != robot.statusOld.sensors.irproxy.fwHL)
-				{
-					SERIAL_MSG.println(F("1,irproxy.fwHl changed;"));
-					TOGGLEPIN(Pin_LED_TOP_G);
-
-				}
-			}
-
-		#endif // 0//test ixproxy
-
- 
-
-
-		// TEST_COMPASS_1 SENZA CALIBRAZIONE 			
-		#if 0		///Ruota misurando in continuazione
-			MSG("Ora punto a nord SENZA CALIBRAZIONE...")
-			robot.goHeading(3);
-		#endif // 1
-
-
-
-
-		// RUOTA E MISURA LDS,COMPASS,SONAR.. 
-		#if 0  
-
-			MSG("TEST LDS,COMPASS,SONAR..");
-			MSG("ACCENDI MOTORI E SCOLLEGA CAVI");
-
-			countDown(5);
-			LASER_ON
-
-			//1)inizializzo i sensori e le variabili
-			int pingCm = 0;
-			int ldsmm = 0;
-			int estimatedDistCm = 0;
-
-			//MSG("Target 180");
-			//delay(1000);
-			//robot.rotateHeading(180, 5);
-			//MSG("Target 90");
-			//delay(1000);
-			//robot.rotateHeading(90, 5);
-			//delay(1000);
-			//MSG("Target 270");
-			//robot.rotateHeading(270, 5);
-			//delay(1000);
-			//MSG("Target 0");
-			//robot.rotateHeading(270, 5);
-			//MSG("Target 180");
-
-
-		#endif // TEST_ALL
-
-		//PROVA SERVO----------------------------------
-		#if 0	
-
-			MSG("Servo al centro...")
-			//servoSonar.attach(Pin_ServoSonarPWM);
-			robot.ServoAtPos(10); delay(1000);
-			robot.ServoAtPos(160); delay(1000);
-			robot.ServoAtPos(90); delay(1000);
-
-
-		#endif // 0
 
 	#pragma endregion //regione dei test
 
